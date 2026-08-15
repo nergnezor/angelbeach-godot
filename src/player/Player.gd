@@ -53,9 +53,14 @@ func move_dir_speed_scale(dir: Vector3) -> float:
 
 # --- visuals -----------------------------------------------------------------
 # The sim node's origin rides at hip height, so the model hangs PLAYER_HEIGHT
-# below it to put the feet on the sand. The rig's own forward is -Z at identity
-# while `facing` is a yaw off +X, hence the quarter turn.
-const MODEL_YAW_OFFSET := -PI * 0.5
+# below it to put the feet on the sand.
+#
+# The rig faces +Z at identity — measured, not assumed: rendered with no
+# rotation it looks straight down the camera at +Z. A yaw about +Y maps
+# (0,0,1) to (sin, 0, cos), and `facing` is (cos yaw, 0, -sin yaw), so the
+# model's turn is yaw + 90 degrees. It was -90 first, which pointed every
+# player backwards and posed their arms against a body facing the other way.
+const MODEL_YAW_OFFSET := PI * 0.5
 # Measured in Spike2: the authored run cycle carries 151.5 cm/s at rate 1.0.
 const CYCLE_SPEED := 1.515
 const RUN_THRESHOLD := 0.35
@@ -65,6 +70,48 @@ var view: Node3D
 var skel: Skeleton3D
 var anim: AnimationPlayer
 var foot_lock: FootLock
+var gesture: GestureIK
+
+# --- stroke state ------------------------------------------------------------
+# Set by Match, read by GestureIK. Purely presentational: none of it feeds the
+# rules, so a headless run leaves all of it at rest.
+const SWING_TIME := 0.35         # seconds for a through-swing to play out
+const BLEND_TIME := 0.25         # seconds to reach a full contact pose
+
+var hit_type := GestureIK.HIT_NONE
+var gesture_blend := 0.0
+var swing := 0.0
+var serve_phase := 0.0
+var aim := Vector3.ZERO
+var has_aim := false
+var meet := Vector3.ZERO
+var has_meet := false
+var ball_pos := Vector3.ZERO
+var ball_live := false
+var extra_crouch := 0.0
+var _swing_t := -1.0
+
+# The moment the ball is actually struck. Everything before this is the windup;
+# the follow-through plays off this envelope, so a whiff retracts along the
+# windup instead of finishing a swing that never connected.
+func trigger_hit() -> void:
+	_swing_t = 0.0
+
+func update_gesture(dt: float) -> void:
+	if _swing_t >= 0.0:
+		_swing_t += dt
+		swing = clampf(_swing_t / SWING_TIME, 0.0, 1.0)
+		if swing >= 1.0:
+			# Follow-through done: back to the ready pose.
+			_swing_t = -1.0
+			swing = 0.0
+			hit_type = GestureIK.HIT_NONE
+			has_aim = false
+			has_meet = false
+	else:
+		swing = 0.0
+	var target := 1.0 if hit_type != GestureIK.HIT_NONE else 0.0
+	gesture_blend = move_toward(gesture_blend, target, dt / BLEND_TIME)
 
 func setup_view(scene: PackedScene) -> void:
 	view = scene.instantiate()
@@ -73,6 +120,11 @@ func setup_view(scene: PackedScene) -> void:
 	skel = _find(view, "Skeleton3D") as Skeleton3D
 	anim = _find(view, "AnimationPlayer") as AnimationPlayer
 	if skel != null:
+		# Order matters: the gesture's crouch channel moves the hips, and the
+		# feet have to be planted after that. Modifiers run in child order.
+		gesture = GestureIK.new()
+		gesture.setup(skel, self)
+		skel.add_child(gesture)
 		foot_lock = FootLock.new()
 		foot_lock.setup(skel)
 		skel.add_child(foot_lock)

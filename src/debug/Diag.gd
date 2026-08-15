@@ -13,6 +13,8 @@ func _ready() -> void:
 	var lf := skel.find_bone("l-foot")
 	var rf := skel.find_bone("r-foot")
 
+	_dump_skeleton(skel)
+
 	# Model scale: how tall is the rig, root to head?
 	var head := skel.find_bone("head")
 	anim.play("RESET")
@@ -40,6 +42,22 @@ func _ready() -> void:
 		% [maxv.x - minv.x, maxv.y - minv.y, maxv.z - minv.z])
 	_contact_profile(skel, anim, lf)
 	get_tree().quit()
+
+# The gesture engine needs to name shoulders, elbows and hands. Print the whole
+# hierarchy once rather than guessing at UE's naming (upperarm_r, hand_l, ...) —
+# this rig is not the UE rig and does not share its conventions.
+func _dump_skeleton(skel: Skeleton3D) -> void:
+	print("DIAG skeleton: %d bones" % skel.get_bone_count())
+	for i in skel.get_bone_count():
+		var depth := 0
+		var p := skel.get_bone_parent(i)
+		while p >= 0:
+			depth += 1
+			p = skel.get_bone_parent(p)
+		var rest := skel.get_bone_rest(i).origin
+		print("   %s%2d %-16s parent=%-2d rest=(%.3f, %.3f, %.3f)"
+			% ["  ".repeat(depth), i, skel.get_bone_name(i), skel.get_bone_parent(i),
+				rest.x, rest.y, rest.z])
 
 func _find(n: Node, cls: String) -> Node:
 	if n.get_class() == cls:

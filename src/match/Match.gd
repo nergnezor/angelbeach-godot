@@ -130,6 +130,13 @@ func _human_drive(p: Player) -> void:
 	p.move_input = dir
 	if Input.is_action_pressed("ui_accept") and p.grounded:
 		p.vel.y = Player.JUMP_VELOCITY
+	# You get the same stroke shaping the AI does. Without this the one player
+	# under human control is the only one on court with no arms.
+	if ball.in_play and _side_of(ball.position.x) == p.team:
+		var target_y: float = SET_Y if touches == 1 else BUMP_Y
+		var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, target_y)
+		if bt[0]:
+			_arm_stroke(p, bt[1], bt[2])
 
 func _physics_process(dt: float) -> void:
 	if not headless:
@@ -153,17 +160,23 @@ func _step(dt: float) -> void:
 		print("MATCH DONE (sim limit)")
 		_done = true
 		return
+	if serving:
+		_step_serve(dt)
 	for p in players:
 		_drive(p, dt)
 		p.step(dt)
 		if not headless:
+			p.update_gesture(dt)
 			p._update_view()
 	ball.step(dt)
 	_check_contacts()
 	_check_net_crossing()
 	if not headless:
+		_arm_blocks()
 		_update_hud()
-	if not ball.in_play:
+	# `serving` guards the windup, where the ball is deliberately not in play yet
+	# and would otherwise read as having hit the sand on the first frame.
+	if not ball.in_play and not serving:
 		_end_rally("floor")
 
 # --- AI: who takes it, and how fast do they need to run? ---------------------
@@ -206,6 +219,52 @@ func _drive(p: Player, dt: float) -> void:
 	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
 	p.move_toward_ground(contact, plan["speed_fraction"])
+	if not headless:
+		_arm_stroke(p, contact, tau)
+
+# Which stroke is this player about to play, and where is it aimed? The stroke
+# follows the same touch count the protocol enforces, so the pose can never
+# disagree with what the contact will actually do to the ball.
+func _arm_stroke(p: Player, contact: Vector3, tau: float) -> void:
+	p.ball_pos = ball.position
+	p.ball_live = ball.in_play
+	p.meet = contact
+	p.has_meet = true
+	# The windup starts when the ball is close enough that a real player would
+	# already be shaping the stroke, not the instant they start running.
+	if tau > 1.2:
+		return
+	if p.swing > 0.0:
+		return                                  # mid follow-through, leave it alone
+	if touches == 1:
+		p.hit_type = GestureIK.HIT_SET
+		p.aim = Vector3(_sign(p.team) * 1.8, SET_Y + 0.4, p.position.z)
+	elif touches == 2:
+		# Third touch crosses: it is an attack, and above the tape it is a spike.
+		p.hit_type = GestureIK.HIT_SPIKE
+		p.aim = Vector3(-_sign(p.team) * 4.2, 0.0, p.position.z)
+	else:
+		p.hit_type = GestureIK.HIT_BUMP
+		p.aim = Vector3(_sign(p.team) * 2.5, SET_Y, 0.0)
+	p.has_aim = true
+
+# A blocker is the front player on the DEFENDING side, at the net, while the
+# other team is on their third touch. No new AI: it reads the same touch count
+# and side the rules already track, and only changes the pose.
+func _arm_blocks() -> void:
+	var attacking := _side_of(ball.position.x)
+	for p in players:
+		if p.team == attacking or not p.role_front:
+			continue
+		if p.swing > 0.0:
+			continue
+		var at_net: bool = absf(p.position.x) < 2.2
+		if touches == 2 and ball.in_play and at_net:
+			p.hit_type = GestureIK.HIT_BLOCK
+			p.ball_pos = ball.position
+			p.ball_live = true
+			p.aim = Vector3(_sign(p.team) * 4.0, 0.0, p.position.z)
+			p.has_aim = true
 
 func _check_contacts() -> void:
 	if not ball.in_play:
@@ -249,6 +308,12 @@ func _do_contact(p: Player) -> void:
 		kind = "Spike"
 		to = Vector3(-_sign(p.team) * 4.2, 0.0, randf_range(-COURT_Z + 0.6, COURT_Z - 0.6))
 	ball.vel = Contact.placement_velocity(from, to, touches == 3)
+	if not headless:
+		# The ball has actually been struck: from here the follow-through plays.
+		p.aim = to
+		p.has_aim = true
+		p.hit_type = _stroke_for(kind)
+		p.trigger_hit()
 	print("  CONTACT t=%d %s by team%d at (%.2f,%.2f,%.2f) -> (%.2f,%.2f,%.2f)"
 		% [touches, kind, p.team, from.x, from.y, from.z, to.x, to.y, to.z])
 	rally_seq += " %s%d:%s" % ["A" if p.team == 0 else "B", touches, kind]
@@ -259,6 +324,22 @@ func _check_net_crossing() -> void:
 	if sign(ball.position.x) != sign(_prev_ball_x) and _prev_ball_x != 0.0:
 		rally_crossings += 1
 	_prev_ball_x = ball.position.x
+
+# The serve is a WINDUP, not an instant launch. The ball leaves the hand at
+# SERVE_STRIKE_PHASE — the same choreography boundary the original uses — so the
+# arm is actually at the strike position when the ball departs rather than the
+# ball leaving mid-whip. This is in both paths on purpose: the moment headless
+# and windowed disagree about when a rally starts, the headless run stops being
+# evidence about the game.
+const SERVE_WINDUP := 1.1
+const SERVE_STRIKE_PHASE := 0.78
+
+var serving := false
+var serve_t := 0.0
+var server: Player = null
+var _served := false
+var _serve_from := Vector3.ZERO
+var _serve_vel := Vector3.ZERO
 
 func _serve() -> void:
 	touches = 0
@@ -276,9 +357,40 @@ func _serve() -> void:
 		p.facing = Vector3(-_sign(p.team), 0.0, 0.0)
 		p._sm_want = p.facing
 	var from := Vector3(-COURT_X + 0.4, 2.0, 0.0)
+	# Somebody has to hit it. The back player of the serving team stands behind
+	# their own base line, where the ball leaves from.
+	server = _back_player(0)
+	if server != null:
+		server.position = Vector3(from.x, Player.PLAYER_HEIGHT, from.z)
 	var to := Vector3(4.0, BUMP_Y, randf_range(-2.0, 2.0))
-	ball.launch(from, Contact.ballistic_velocity(from, to, 1.8))
+	_serve_from = from
+	_serve_vel = Contact.ballistic_velocity(from, to, 1.8)
+	serving = true
+	_served = false
+	serve_t = 0.0
 	_prev_ball_x = from.x
+
+func _step_serve(dt: float) -> void:
+	serve_t += dt
+	var ph: float = serve_t / SERVE_WINDUP
+	if not headless and server != null:
+		server.hit_type = GestureIK.HIT_SERVE
+		server.serve_phase = minf(ph, 1.0)
+		server.gesture_blend = 1.0
+	if not _served and ph >= SERVE_STRIKE_PHASE:
+		_served = true
+		ball.launch(_serve_from, _serve_vel)
+	if ph >= 1.0:
+		serving = false
+		if not headless and server != null:
+			server.hit_type = GestureIK.HIT_NONE
+			server.serve_phase = 0.0
+
+func _back_player(team: int) -> Player:
+	for q in players:
+		if q.team == team and not q.role_front:
+			return q
+	return null
 
 func _end_rally(reason: String) -> void:
 	rallies_done += 1
@@ -301,6 +413,12 @@ func _end_rally(reason: String) -> void:
 	_serve()
 
 # --- helpers -----------------------------------------------------------------
+func _stroke_for(kind: String) -> int:
+	match kind:
+		"Set": return GestureIK.HIT_SET
+		"Spike": return GestureIK.HIT_SPIKE
+		_: return GestureIK.HIT_BUMP
+
 func _sign(team: int) -> float:
 	return -1.0 if team == 0 else 1.0
 

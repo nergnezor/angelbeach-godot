@@ -66,10 +66,10 @@ func _update_foot(idx: int, dt: float) -> void:
 		_lock_age[idx] = 0.0
 		_solve_to(idx, world.origin)
 
-# Two-bone IK: thigh and shin rotate so the foot reaches `target` in world
-# space. Solved by the law of cosines, which is exact for a two-link chain and
-# far cheaper than a full-body solver — and, unlike one, it cannot drag the
-# pelvis around, which is what made the UE rig shake in the first place.
+# Thigh and shin rotate so the foot reaches `target` in world space. The solver
+# itself is in TwoBoneIK — the arms are the same two-link problem, and the arms
+# cannot measure their second length off a child bone, so the caller supplies
+# both lengths.
 func _solve_to(foot: int, target: Vector3) -> void:
 	var shin := skel.get_bone_parent(foot)
 	var thigh := skel.get_bone_parent(shin)
@@ -81,49 +81,5 @@ func _solve_to(foot: int, target: Vector3) -> void:
 	var knee_w: Vector3 = (to_world * skel.get_bone_global_pose(shin)).origin
 	var foot_w: Vector3 = (to_world * skel.get_bone_global_pose(foot)).origin
 
-	var l1 := hip_w.distance_to(knee_w)
-	var l2 := knee_w.distance_to(foot_w)
-	var to_target := target - hip_w
-	var dist: float = clampf(to_target.length(), absf(l1 - l2) + 0.001, l1 + l2 - 0.001)
-	if dist < 0.0001:
-		return
-
-	# Knee angle from the law of cosines, then the hip angle that aims the chain.
-	var cos_knee: float = clampf((l1 * l1 + l2 * l2 - dist * dist) / (2.0 * l1 * l2), -1.0, 1.0)
-	var knee_angle := acos(cos_knee)
-	var cos_hip: float = clampf((l1 * l1 + dist * dist - l2 * l2) / (2.0 * l1 * dist), -1.0, 1.0)
-	var hip_angle := acos(cos_hip)
-
-	# Bend in the plane containing the current knee, so the leg keeps the pose's
-	# own knee direction instead of snapping to an arbitrary one.
-	var chain_dir := to_target.normalized()
-	var current := (knee_w - hip_w).normalized()
-	var bend_axis := chain_dir.cross(current)
-	if bend_axis.length_squared() < 0.0001:
-		bend_axis = chain_dir.cross(Vector3.RIGHT)
-		if bend_axis.length_squared() < 0.0001:
-			bend_axis = chain_dir.cross(Vector3.FORWARD)
-	bend_axis = bend_axis.normalized()
-
-	var new_knee := hip_w + chain_dir.rotated(bend_axis, hip_angle) * l1
-	_aim_bone(thigh, new_knee - hip_w)
-	_aim_bone(shin, target - new_knee)
-
-# Rotate a bone so its axis toward its child points along `dir` (world space).
-func _aim_bone(bone: int, dir: Vector3) -> void:
-	if dir.length_squared() < 0.000001:
-		return
-	var g := skel.get_bone_global_pose(bone)
-	var cur_world := (skel.global_transform * g).basis
-	# The rig's bones run down +Y in their own space; find the rotation that
-	# takes the current direction onto the wanted one and pre-apply it.
-	var from := (cur_world * Vector3.UP).normalized()
-	var to := dir.normalized()
-	var axis := from.cross(to)
-	if axis.length_squared() < 0.000001:
-		return
-	var angle := from.angle_to(to)
-	var delta := Basis(axis.normalized(), angle)
-	var new_basis := delta * cur_world
-	var local := skel.global_transform.basis.inverse() * new_basis
-	skel.set_bone_global_pose(bone, Transform3D(local, g.origin))
+	TwoBoneIK.solve(skel, thigh, shin,
+		hip_w.distance_to(knee_w), knee_w.distance_to(foot_w), target)

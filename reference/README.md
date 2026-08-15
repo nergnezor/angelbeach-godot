@@ -30,6 +30,26 @@ applied to +X, so a facing vector can drive a model's basis directly. See
 `Player.yaw_of` / `Player.dir_of` — use them rather than open-coding an atan2,
 which is how the first port ended up reading a Z-up yaw out of a Y-up vector.
 
+## The strokes
+
+`Script/Player/PlayerIK.as` is ported: `GestureSolver` in Rust answers where the
+hands and elbow hints want to be for bump, set, spike, block and serve, with the
+original's three time profiles (MinJerk for a self-contained reach, EaseIn for a
+segment ending AT contact, EaseOut for a follow-through) and `ArcAround` so
+hands sweep arcs about the shoulder rather than chords. `GestureIK.gd` reads the
+live bones and drives both arms through `TwoBoneIK`, the same solver the feet
+use.
+
+Two things the original could assume and this rig cannot:
+
+- **There is no hand bone.** The chain is `r-arm -> r-forearm` and the forearm's
+  tip is where a hand would be, so the second link length has to be supplied
+  rather than read off a child. Palm rotations are dropped — there is nothing to
+  rotate.
+- **The offsets are not in centimetres here.** Every constant in `PlayerIK.as`
+  is against a ~180 cm actor; this rig is 1.45 m with a 0.56 m arm. They are
+  scaled by the ratio of the rig's MEASURED arm reach to the original's 1.10 m.
+
 Still to port (line counts at the time of the move):
 
     Script/AI/AIPlayer.as             1465   state machine, spike approach,

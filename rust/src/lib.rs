@@ -523,3 +523,392 @@ impl Contact {
         v
     }
 }
+
+// --- GestureSolver -----------------------------------------------------------
+//
+// The strokes, ported from AngelBeach/Script/Player/PlayerIK.as. Given where the
+// body currently is, this returns where the two hands and the two elbow hints
+// want to be, in world space, for whichever stroke is being played.
+//
+// Unlike the rest of this crate there is no baseline to match here — the poses
+// are visual only and never feed the rules — so it uses plain Vector3 maths
+// instead of the f32/f64 mirroring the sim code has to observe.
+//
+// Every offset in the original is in centimetres against a ~180 cm actor. This
+// rig is 1.45 m, so they are expressed here as metres scaled by `s`, the ratio
+// of the rig's MEASURED arm reach to the original's 1.10 m. Hard-coding 0.35 m
+// "forward from the chest" onto a shorter rig puts the platform through its own
+// stomach.
+const ORIGINAL_ARM_REACH: f32 = 1.10;
+
+// Real limb motion is never constant-speed. Three profiles cover every segment,
+// chosen by what the segment physically IS.
+//
+// MinJerk: a self-contained reach (cock, toss, platform set-up) — the
+// minimum-jerk law (Flash & Hogan), bell velocity, slow-fast-slow.
+fn min_jerk(t: f32) -> f32 {
+    let c = t.clamp(0.0, 1.0);
+    c * c * c * (10.0 + c * (6.0 * c - 15.0))
+}
+
+/// EaseIn: a segment ENDING at contact — the hand passes through the ball at
+/// PEAK speed. A whip never decelerates into the ball.
+fn ease_in(t: f32) -> f32 {
+    let c = t.clamp(0.0, 1.0);
+    c * c
+}
+
+/// EaseOut: follow-through — starts at strike speed and bleeds off.
+fn ease_out(t: f32) -> f32 {
+    let c = t.clamp(0.0, 1.0);
+    1.0 - (1.0 - c) * (1.0 - c)
+}
+
+/// Hands sweep ARCS around the shoulder, not chords between waypoints: nlerp the
+/// direction from the pivot and lerp the radius. A straight-line hand path is
+/// the giveaway of keyframe interpolation; the arc is what a hinged arm does.
+fn arc_around(pivot: Vector3, a: Vector3, b: Vector3, t: f32) -> Vector3 {
+    let da = a - pivot;
+    let db = b - pivot;
+    let ra = da.length();
+    let rb = db.length();
+    if ra < 0.01 || rb < 0.01 {
+        return a + (b - a) * t;
+    }
+    let dir = nrm(da / ra + (db / rb - da / ra) * t);
+    pivot + dir * (ra + (rb - ra) * t)
+}
+
+/// Godot's normalized() yields zero for a zero vector, which silently produces a
+/// hand target at the pivot. Every direction here goes through this instead.
+fn nrm(v: Vector3) -> Vector3 {
+    if v.length_squared() < 1e-8 {
+        Vector3::ZERO
+    } else {
+        v.normalized()
+    }
+}
+
+/// Clamp `to - from` onto a sphere of `reach` around `from`.
+fn within_reach(from: Vector3, to: Vector3, reach: f32) -> Vector3 {
+    let d = to - from;
+    if d.length() > reach {
+        from + nrm(d) * reach
+    } else {
+        to
+    }
+}
+
+pub const HIT_NONE: i64 = 0;
+pub const HIT_BUMP: i64 = 1;
+pub const HIT_SET: i64 = 2;
+pub const HIT_SPIKE: i64 = 3;
+pub const HIT_BLOCK: i64 = 4;
+pub const HIT_SERVE: i64 = 5;
+
+#[derive(GodotClass)]
+#[class(no_init, base = Object)]
+pub struct GestureSolver;
+
+#[godot_api]
+impl GestureSolver {
+    /// Returns { hand_r, hand_l, pole_r, pole_l, crouch } in world space.
+    ///
+    /// Takes a dictionary because the pose genuinely depends on fifteen things,
+    /// and a fifteen-argument call is unreadable from both sides.
+    #[func]
+    fn solve(a: VarDictionary) -> VarDictionary {
+        let hit = geti(&a, "hit");
+        let blend = getf(&a, "blend") as f32;
+        let swing = getf(&a, "swing") as f32;
+        let serve_phase = getf(&a, "serve_phase") as f32;
+        let sh_r = getv(&a, "sh_r");
+        let sh_l = getv(&a, "sh_l");
+        let head = getv(&a, "head");
+        let fwd = nrm(getv(&a, "fwd"));
+        let right = nrm(getv(&a, "right"));
+        let ball = getv(&a, "ball");
+        let ball_in_play = getb(&a, "ball_in_play");
+        let meet = getv(&a, "meet");
+        let has_meet = getb(&a, "has_meet");
+        let aim_at = getv(&a, "aim");
+        let has_aim = getb(&a, "has_aim");
+        let reach = getf(&a, "arm_reach") as f32;
+        let feet_y = getf(&a, "feet_y") as f32;
+        let extra_crouch = getf(&a, "extra_crouch") as f32;
+
+        let s = reach / ORIGINAL_ARM_REACH;
+        let up = Vector3::UP;
+        let chest = (sh_r + sh_l) * 0.5;
+
+        // Where the player is sending the ball; falls back to "up and forward".
+        let aim = if has_aim {
+            nrm(aim_at - head)
+        } else {
+            nrm(fwd * 0.4 + up)
+        };
+        let mut aim_flat = nrm(Vector3::new(aim.x, 0.0, aim.z));
+        if aim_flat.length_squared() < 0.01 {
+            aim_flat = fwd;
+        }
+
+        // The hands reach straight at the ball, clamped to arm's length from the
+        // chest so the IK stays solvable.
+        let mut ball_contact = chest + fwd * 0.35 * s + up * 0.05 * s;
+        if ball_in_play {
+            ball_contact = within_reach(chest, ball, reach);
+        }
+
+        // Relaxed ready pose: hands hang slightly forward at the sides.
+        let ready_r = sh_r + fwd * 0.18 * s - up * 0.35 * s;
+        let ready_l = sh_l + fwd * 0.18 * s - up * 0.35 * s;
+
+        let contact_r;
+        let contact_l;
+        let pole_r;
+        let pole_l;
+        let mut crouch = 0.0f32;
+
+        if hit == HIT_BUMP {
+            // Dig: arms STRAIGHT, hands JOINED, contact on the FOREARMS. The hand
+            // targets are pushed to near-full extension along the shoulder->ball
+            // line — a bent-elbow "hands on the ball" pose reads as poking, not a
+            // platform.
+            //
+            // While the ball is still descending, PARK the platform at the
+            // predicted meet point instead of tracking the live ball. "Set your
+            // platform early and let the ball come to you", literally: a static
+            // target is the one thing a speed-limited solver reliably converges
+            // on.
+            let mut platform_ball = ball_contact;
+            if ball_in_play && has_meet && ball.y > meet.y + 0.30 * s {
+                platform_ball = within_reach(chest, meet, reach);
+            }
+            let platform = platform_ball - up * 0.12 * s;
+            let mut plat_dir = nrm(platform - chest);
+            if plat_dir.length_squared() < 0.01 {
+                plat_dir = nrm(fwd - up);
+            }
+            // Lock the elbows out.
+            let ext = (platform - chest).length().max(0.96 * s);
+            let mut plat_end = chest + plat_dir * ext;
+            // At contact the platform SWINGS THROUGH the ball, lifting along the
+            // aim — a bagger is a controlled swing from the shoulders, not a held
+            // tray. EaseOut: starts at contact speed and bleeds off.
+            plat_end += (aim_flat * 0.26 * s + up * 0.18 * s) * ease_out(swing);
+            contact_r = plat_end - right * 0.05 * s;
+            contact_l = plat_end + right * 0.05 * s;
+            // Elbow hints sit ON the shoulder->hand line, nudged down and in, so
+            // the arms stay straight instead of chicken-winging outward.
+            pole_r = sh_r + plat_dir * 0.45 * s - up * 0.22 * s - right * 0.06 * s;
+            pole_l = sh_l + plat_dir * 0.45 * s - up * 0.22 * s + right * 0.06 * s;
+            // THE LEGS SET THE PLATFORM HEIGHT: the lower the ball, the deeper the
+            // knees, while the arms keep their stable slope. Keyed on the BALL's
+            // height, never on the chest — chest-derived depth feeds back through
+            // the crouch and the legs oscillate.
+            let mut knee_key_y = platform_ball.y;
+            if ball_in_play {
+                knee_key_y = if has_meet && ball.y > meet.y + 0.30 * s {
+                    meet.y
+                } else {
+                    ball.y
+                };
+            }
+            let above_feet = knee_key_y - feet_y;
+            let ball_low = ((1.10 * s - above_feet) / (0.80 * s)).clamp(0.0, 1.0);
+            crouch = 0.5 + 0.2 * ball_low;
+        } else if hit == HIT_SET {
+            // Overhead window set: hands form a triangle above the forehead,
+            // elbows out and forward. At contact the wrists GIVE to load (the
+            // cushion), then the whole body EXTENDS through the ball. A set with
+            // no cushion and no leg drive reads as a stiff tap.
+            let mut cup_ball = ball_contact;
+            if ball_in_play && has_meet && ball.y > meet.y + 0.30 * s {
+                cup_ball = within_reach(chest, meet, reach);
+            }
+            let cup = cup_ball - up * 0.06 * s;
+            let push = nrm(aim_flat * 0.6 + up * 0.8);
+            // Swing is 0 until the real contact fires, so pre-contact the window
+            // just holds under the ball; the give and the extend are follow-through.
+            let along = if swing <= 0.0 {
+                0.06 * s * min_jerk(blend)
+            } else if swing < 0.2 {
+                (0.06 - 0.14 * (swing / 0.2)) * s
+            } else {
+                (-0.08 + 0.42 * ((swing - 0.2) / 0.8)) * s
+            };
+            let extend = push * along;
+            // Hands ~20 cm apart and UNCROSSED — right hand right, left hand left.
+            contact_r = cup + right * 0.10 * s + extend;
+            contact_l = cup - right * 0.10 * s + extend;
+            // Elbows OUT to the sides and forward: the open triangle window.
+            pole_r = sh_r + fwd * 0.30 * s + right * 0.18 * s + up * 0.04 * s;
+            pole_l = sh_l + fwd * 0.30 * s - right * 0.18 * s + up * 0.04 * s;
+            // Legs load through the cushion and extend through the drive. Single
+            // direction in swing so it cannot oscillate.
+            crouch = 0.22 - 0.22 * ((swing - 0.2) / 0.5).clamp(0.0, 1.0);
+        } else if hit == HIT_SPIKE {
+            // A real overhand swing in four phases. The right arm draws a bow and
+            // whips over the top; the left arm is the timing/counter-rotation arm.
+            //   1 BACKSWING  swung back at shoulder height as the body rises
+            //   2 COCKED     bow drawn: elbow HIGH, hand above and behind the head
+            //   3 STRIKE     elbow leads, forearm whips over, contact at extension
+            //   4 FOLLOW     hand snaps down and across to the opposite hip
+            // Phases 1-3 time to the ball descending; phase 4 runs off the
+            // post-contact envelope, so a whiff retracts instead of finishing.
+            let back_sw = sh_r - fwd * 0.18 * s - up * 0.06 * s + right * 0.16 * s;
+            let cocked = head - fwd * 0.16 * s + right * 0.06 * s + up * 0.24 * s;
+            // Reach for the REAL ball height, not the reach-clamped contact point:
+            // the solver saturates at full extension so over-asking is free, while
+            // under-asking leaves the hand below the ball at the jump apex.
+            let ball_y_raw = if ball_in_play { ball.y } else { ball_contact.y };
+            let strike_up = (ball_y_raw - sh_r.y).clamp(0.35 * s, 1.25 * s);
+            let strike = sh_r + up * strike_up + fwd * 0.24 * s + right * 0.06 * s;
+            let finish = sh_r - up * 0.42 * s + fwd * 0.06 * s - right * 0.32 * s;
+
+            let mut swing_phase = blend;
+            if ball_in_play {
+                // 0 when the ball is a long way above the strike height, 1 at contact.
+                let drop = ball.y - strike.y;
+                swing_phase = (1.0 - drop / (2.60 * s)).clamp(0.0, 1.0) * blend;
+            }
+
+            if swing > 0.001 {
+                contact_r = arc_around(sh_r, strike, finish, ease_out(swing));
+                pole_r = contact_r + up * 0.12 * s - fwd * 0.04 * s + right * 0.08 * s;
+            } else if swing_phase < 0.4 {
+                // Backswing -> cocked: draw the bow as the body rises.
+                contact_r = arc_around(sh_r, back_sw, cocked, min_jerk(swing_phase / 0.4));
+                pole_r = contact_r + up * 0.22 * s - fwd * 0.26 * s + right * 0.12 * s;
+            } else {
+                // Cocked -> strike: the elbow travels forward and down, leading
+                // the hand over the top.
+                let t = ease_in((swing_phase - 0.4) / 0.6);
+                contact_r = arc_around(sh_r, cocked, strike, t);
+                pole_r = contact_r + up * (0.22 - 0.08 * t) * s
+                    - fwd * (0.26 - 0.40 * t) * s
+                    + right * 0.10 * s;
+            }
+
+            // Left arm points at the ball through the windup, then PULLS DOWN to
+            // the ribs as the right whips over. A left arm still pointing at
+            // contact is the tell of a video-game spike.
+            let to_ball_l = {
+                let d = ball_contact - sh_l;
+                if d.length() > 0.95 * s {
+                    nrm(d) * 0.95 * s
+                } else {
+                    d
+                }
+            };
+            let point_l = sh_l + to_ball_l;
+            let tuck_l = sh_l - up * 0.28 * s + fwd * 0.12 * s;
+            let left_pull = ((swing_phase - 0.5) / 0.4).max(swing).clamp(0.0, 1.0);
+            contact_l = point_l + (tuck_l - point_l) * left_pull;
+            pole_l = if left_pull < 0.5 {
+                sh_l + to_ball_l * 0.4 - up * 0.15 * s
+            } else {
+                sh_l - up * 0.20 * s - fwd * 0.10 * s
+            };
+        } else if hit == HIT_BLOCK {
+            // Both hands reach up and toward the ball, as high and close as the
+            // arms allow, pressed together to penetrate the net rather than spread.
+            let block_mid = chest + {
+                let d = ball_contact - chest;
+                if d.length() > 0.95 * s {
+                    nrm(d) * 0.95 * s
+                } else {
+                    d
+                }
+            };
+            contact_r = block_mid + right * 0.09 * s;
+            contact_l = block_mid - right * 0.09 * s;
+            // Elbows high and slightly forward so the arms form a firm wall.
+            pole_r = contact_r + fwd * 0.25 * s - up * 0.05 * s;
+            pole_l = contact_l + fwd * 0.25 * s - up * 0.05 * s;
+        } else if hit == HIT_SERVE {
+            // Choreographed by serve_phase, not by the ball: the LEFT arm carries
+            // the ball to a toss apex in front of the RIGHT shoulder then tucks
+            // away, while the RIGHT draws back behind the ear and whips overhead.
+            let p = serve_phase.clamp(0.0, 1.0);
+            let toss_apex = chest + fwd * 0.24 * s + up * 0.62 * s + right * 0.10 * s;
+            let toss_start = chest + fwd * 0.30 * s - up * 0.06 * s + right * 0.06 * s;
+            let toss_hand = toss_apex - up * 0.16 * s;
+            let tuck_l = sh_l - up * 0.26 * s + fwd * 0.10 * s;
+            if p < 0.6 {
+                let t = p / 0.6;
+                contact_l = toss_start + (toss_hand - toss_start) * min_jerk(t);
+                pole_l = sh_l + fwd * 0.35 * s - up * 0.04 * s;
+            } else {
+                let t = (p - 0.6) / 0.4;
+                contact_l = toss_hand + (tuck_l - toss_hand) * min_jerk(t);
+                pole_l = sh_l - up * 0.18 * s - fwd * 0.08 * s;
+            }
+
+            let rest_r = sh_r + fwd * 0.15 * s - up * 0.22 * s;
+            let draw_r = head + right * 0.24 * s - fwd * 0.14 * s + up * 0.04 * s;
+            let strike_r = toss_apex + up * 0.06 * s;
+            let follow_r = sh_r + fwd * 0.55 * s + up * 0.08 * s;
+            // Segment boundaries match the serve physics: the ball leaves at phase
+            // 0.78, so the hand must be AT strike_r exactly then.
+            if p < 0.55 {
+                contact_r = arc_around(sh_r, rest_r, draw_r, min_jerk(p / 0.55));
+                pole_r = contact_r + up * 0.20 * s - fwd * 0.25 * s + right * 0.12 * s;
+            } else if p < 0.78 {
+                let t = (p - 0.55) / 0.23;
+                contact_r = arc_around(sh_r, draw_r, strike_r, ease_in(t));
+                pole_r = contact_r + up * 0.18 * s - fwd * 0.20 * s + right * 0.10 * s;
+            } else {
+                let t = (p - 0.78) / 0.22;
+                contact_r = arc_around(sh_r, strike_r, follow_r, ease_out(t));
+                pole_r = contact_r + up * 0.10 * s + right * 0.12 * s;
+            }
+            // A gather-dip as the toss goes up, legs extending through the strike.
+            crouch = 0.22 * (((p / 0.7).clamp(0.0, 1.0)) * std::f32::consts::PI).sin();
+        } else {
+            contact_r = ready_r;
+            contact_l = ready_l;
+            pole_r = sh_r - up * 0.40 * s;
+            pole_l = sh_l - up * 0.40 * s;
+        }
+
+        // Spike, block and serve build their own motion into the contact targets
+        // via swing_phase/serve_phase, so re-lerping them from the ready pose
+        // would start the hand at the hip instead of cocked. Everything else
+        // eases out of ready on a MinJerk ramp — constant speed reads mechanical.
+        let (want_r, want_l) = if hit == HIT_SPIKE || hit == HIT_BLOCK || hit == HIT_SERVE {
+            (contact_r, contact_l)
+        } else {
+            let ramp = min_jerk(blend);
+            (
+                ready_r + (contact_r - ready_r) * ramp,
+                ready_l + (contact_l - ready_l) * ramp,
+            )
+        };
+
+        dict! {
+            "hand_r" => want_r,
+            "hand_l" => want_l,
+            "pole_r" => pole_r,
+            "pole_l" => pole_l,
+            "crouch" => (crouch * blend + extra_crouch).clamp(0.0, 1.0) as f64,
+        }
+    }
+}
+
+fn getf(d: &VarDictionary, k: &str) -> f64 {
+    d.get(k).and_then(|v| v.try_to::<f64>().ok()).unwrap_or(0.0)
+}
+fn geti(d: &VarDictionary, k: &str) -> i64 {
+    d.get(k).and_then(|v| v.try_to::<i64>().ok()).unwrap_or(0)
+}
+fn getb(d: &VarDictionary, k: &str) -> bool {
+    d.get(k)
+        .and_then(|v| v.try_to::<bool>().ok())
+        .unwrap_or(false)
+}
+fn getv(d: &VarDictionary, k: &str) -> Vector3 {
+    d.get(k)
+        .and_then(|v| v.try_to::<Vector3>().ok())
+        .unwrap_or(Vector3::ZERO)
+}
