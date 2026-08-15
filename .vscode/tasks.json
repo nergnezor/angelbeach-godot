@@ -18,6 +18,16 @@
       "problemMatcher": ["$rustc"]
     },
     {
+      // No debugger at all. If this runs and "Play (windowed)" does not, the
+      // problem is the debug setup, not the game.
+      "label": "play (windowed, no debugger)",
+      "type": "shell",
+      "command": "${config:angelbeach.godot} --path ${workspaceFolder} res://src/match/Match.tscn",
+      "dependsOn": "cargo build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
       "label": "acceptance: seeded headless match",
       "type": "shell",
       "command": "${config:angelbeach.godot} --headless --path ${workspaceFolder} res://src/match/Match.tscn",

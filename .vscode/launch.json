@@ -1,21 +1,27 @@
 {
+  // type: "lldb" is CodeLLDB (vadimcn.vscode-lldb), which launches a native
+  // binary directly. Do NOT use type: "node" here — js-debug expects a Node
+  // program, and handed a Godot binary it fails without a useful message.
+  // As a side benefit this is a real native debugger, so breakpoints in
+  // rust/src/lib.rs work while the game runs.
   "version": "0.2.0",
   "configurations": [
     {
       "name": "Play (windowed)",
-      "type": "node",
+      "type": "lldb",
       "request": "launch",
-      "runtimeExecutable": "${config:angelbeach.godot}",
+      "program": "${config:angelbeach.godot}",
       "args": ["--path", "${workspaceFolder}", "res://src/match/Match.tscn"],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
+      "sourceLanguages": ["rust"],
       "preLaunchTask": "cargo build"
     },
     {
       "name": "Headless match (the acceptance run)",
-      "type": "node",
+      "type": "lldb",
       "request": "launch",
-      "runtimeExecutable": "${config:angelbeach.godot}",
+      "program": "${config:angelbeach.godot}",
       "args": [
         "--headless",
         "--path",
@@ -23,14 +29,31 @@
         "res://src/match/Match.tscn"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
+      "sourceLanguages": ["rust"],
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Screenshot (writes a PNG, then quits)",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${config:angelbeach.godot}",
+      "args": [
+        "--path",
+        "${workspaceFolder}",
+        "res://src/debug/Shot.tscn",
+        "--",
+        "420"
+      ],
+      "cwd": "${workspaceFolder}",
+      "terminal": "integrated",
       "preLaunchTask": "cargo build"
     },
     {
       "name": "Spike 1 — movement budget PORTCHECK",
-      "type": "node",
+      "type": "lldb",
       "request": "launch",
-      "runtimeExecutable": "${config:angelbeach.godot}",
+      "program": "${config:angelbeach.godot}",
       "args": [
         "--headless",
         "--path",
@@ -38,14 +61,15 @@
         "res://src/debug/Spike1.tscn"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
+      "sourceLanguages": ["rust"],
       "preLaunchTask": "cargo build"
     },
     {
       "name": "Spike 3 — foot lock vs skate",
-      "type": "node",
+      "type": "lldb",
       "request": "launch",
-      "runtimeExecutable": "${config:angelbeach.godot}",
+      "program": "${config:angelbeach.godot}",
       "args": [
         "--headless",
         "--path",
@@ -53,14 +77,13 @@
         "res://src/debug/Spike3.tscn"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "preLaunchTask": "cargo build"
+      "terminal": "integrated"
     },
     {
       "name": "Diag — rig scale and contact profile",
-      "type": "node",
+      "type": "lldb",
       "request": "launch",
-      "runtimeExecutable": "${config:angelbeach.godot}",
+      "program": "${config:angelbeach.godot}",
       "args": [
         "--headless",
         "--path",
@@ -68,24 +91,17 @@
         "res://src/debug/Diag.tscn"
       ],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal"
+      "terminal": "integrated"
     },
     {
       "name": "Editor",
-      "type": "node",
+      "type": "lldb",
       "request": "launch",
-      "runtimeExecutable": "${config:angelbeach.godot}",
+      "program": "${config:angelbeach.godot}",
       "args": ["--editor", "--path", "${workspaceFolder}"],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
+      "terminal": "integrated",
       "preLaunchTask": "cargo build"
-    },
-    {
-      "name": "Attach LLDB to a running Godot (debug the .so)",
-      "type": "lldb",
-      "request": "attach",
-      "program": "${config:angelbeach.godot}",
-      "waitFor": true
     }
   ]
 }
