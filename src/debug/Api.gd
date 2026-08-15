@@ -8,4 +8,5 @@ func _ready() -> void:
 		print("%-34s %s" % [m, s.has_method(m)])
 	print("SkeletonModifier3D exists: ", ClassDB.class_exists("SkeletonModifier3D"))
 	print("SkeletonIK3D exists:       ", ClassDB.class_exists("SkeletonIK3D"))
+	s.free()   # probe node was never in the tree; without this it leaks at exit
 	get_tree().quit()
