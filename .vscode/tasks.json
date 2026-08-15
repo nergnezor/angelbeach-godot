@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cargo build",
+      "type": "shell",
+      "command": "cargo build",
+      "options": { "cwd": "${workspaceFolder}/rust" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$rustc"],
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      "label": "cargo build --release",
+      "type": "shell",
+      "command": "cargo build --release",
+      "options": { "cwd": "${workspaceFolder}/rust" },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "acceptance: seeded headless match",
+      "type": "shell",
+      "command": "${config:angelbeach.godot} --headless --path ${workspaceFolder} res://src/match/Match.tscn",
+      "dependsOn": "cargo build",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "reimport (after adding a class or an asset)",
+      "type": "shell",
+      "command": "${config:angelbeach.godot} --headless --import --path ${workspaceFolder}",
+      "problemMatcher": []
+    }
+  ]
+}

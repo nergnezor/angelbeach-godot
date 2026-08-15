@@ -1,0 +1,16 @@
+{
+  // Every launch config and task reads the engine path from here, so moving to
+  // a new Godot build is a one-line change.
+  "angelbeach.godot": "/home/erik/godot4/Godot_v4.7.1-stable_linux.x86_64",
+
+  "rust-analyzer.linkedProjects": ["${workspaceFolder}/rust/Cargo.toml"],
+  "files.associations": {
+    "*.gdextension": "ini",
+    "*.tscn": "ini",
+    "*.tres": "ini"
+  },
+  "files.exclude": {
+    "rust/target": true,
+    ".godot": true
+  }
+}

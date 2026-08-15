@@ -1,0 +1,91 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Play (windowed)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${config:angelbeach.godot}",
+      "args": ["--path", "${workspaceFolder}", "res://src/match/Match.tscn"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Headless match (the acceptance run)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${config:angelbeach.godot}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "res://src/match/Match.tscn"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Spike 1 — movement budget PORTCHECK",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${config:angelbeach.godot}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "res://src/debug/Spike1.tscn"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Spike 3 — foot lock vs skate",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${config:angelbeach.godot}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "res://src/debug/Spike3.tscn"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Diag — rig scale and contact profile",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${config:angelbeach.godot}",
+      "args": [
+        "--headless",
+        "--path",
+        "${workspaceFolder}",
+        "res://src/debug/Diag.tscn"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Editor",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${config:angelbeach.godot}",
+      "args": ["--editor", "--path", "${workspaceFolder}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "Attach LLDB to a running Godot (debug the .so)",
+      "type": "lldb",
+      "request": "attach",
+      "program": "${config:angelbeach.godot}",
+      "waitFor": true
+    }
+  ]
+}
