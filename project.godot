@@ -1,0 +1,12 @@
+config_version=5
+
+[application]
+config/name="AngelBeach Godot Spike"
+run/main_scene="res://src/match/Match.tscn"
+config/features=PackedStringArray("4.7", "Forward Plus")
+
+[debug]
+settings/stdout/print_fps=false
+
+[physics]
+common/physics_ticks_per_second=60
