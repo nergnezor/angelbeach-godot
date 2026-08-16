@@ -50,32 +50,30 @@ Two things the original could assume and this rig cannot:
   is against a ~180 cm actor; this rig is 1.45 m with a 0.56 m arm. They are
   scaled by the ratio of the rig's MEASURED arm reach to the original's 1.10 m.
 
-Still to port. Only AIPlayer.as has anything left, and the machinery it
-still owns is the difference between four players who each chase the
-nearest ball and two pairs who play as teams:
+## What is left
 
-    Script/AI/AIPlayer.as   the dive. Player.start_dive exists and
-                            nothing calls it, and two attempts to wire
-                            it made the game much worse (141 CONTACT
-                            lines -> 78, then -> 32). The reason is
-                            structural: MotionPlan.as tries SEVERAL
-                            candidate contact heights and only reaches
-                            the dive branch when none is playable, and
-                            it dives at the ball's landing rather than
-                            at the candidate. Match.gd evaluates one
-                            candidate, so its `playable` means "not at
-                            this height", which is a different question.
-                            Move the candidate search into the planner
-                            first and the dive falls out of it; the serve toss
-                            sequence; aim selection weighted by
-                            Difficulty; the deep-ball role rule that
-                            gives the back player serve receive.
+Only `AIPlayer.as` still has unported machinery, and it is the difference
+between four players who each chase the nearest ball and two pairs who play as
+teams:
 
-Ported and verified: Environment.as, Court.as, GameMode.as, GameState.as,
-VolleyballPlayer.as, PlayerIK.as, MotionPlan.as, Ball.as, and from
-AIPlayer.as the sticky hitter role and ApproachForSpike.
+- **The dive.** `Player.start_dive` exists and nothing calls it. Two attempts to
+  wire it made the game much worse — 141 CONTACT lines to 78, then to 32 — and
+  the reason is structural rather than a threshold. `MotionPlan.as` tries
+  SEVERAL candidate contact heights and only reaches the dive branch when none
+  is playable, and it dives at the ball's landing rather than at the candidate.
+  `Match.gd` evaluates one candidate, so its `playable` answers "not at this
+  height", which is a different question. Move the candidate search into the
+  planner first and the dive falls out of it.
+- **The serve toss.** The serve is a windup with no toss.
+- **Aim weighted by Difficulty**, so the two teams stop playing equally well.
+- **The deep-ball role rule**, which gives the back player serve receive.
 
-Already ported, and verified numerically identical:
+Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
+`GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,
+`Ball.as`, and from `AIPlayer.as` the sticky hitter role, `ApproachForSpike`,
+the block, the split step and `ReactionDelay`.
+
+Verified numerically identical where the port allowed it:
 
     Script/AI/MotionPlan.as       -> rust/src/lib.rs  (MotionPlan)
     Script/World/Ball.as          -> rust/src/lib.rs  (BallSim, Contact)
@@ -127,9 +125,15 @@ that would actually gain wall-clock but is also the most grown-together with
 
     godot --headless --path . res://src/match/Match.tscn
 
-Seeded, so it reproduces exactly. Compare stdout against the previous build:
-165 contacts, 330 printed vectors, 7 RALLY lines, 28 MOTIONSTATS lines. The
-MotionPlan/Contact move was verified byte-identical this way, as was BallSim.
+Seeded, so it reproduces exactly. Compare stdout against the previous build.
+As of the ReactionDelay port: 146 CONTACT lines (53 of them spikes), 8 RALLY
+lines, 32 MOTIONSTATS lines. The MotionPlan/Contact move was verified
+byte-identical this way, as was BallSim, and so were both presentation ports.
+
+The number moves whenever the RULES move, and that is the point — it moved
+deliberately at GameMode.as (serving alternates), at VolleyballPlayer.as (nobody
+crosses the net), and at ApproachForSpike (the set became jumpable). Re-record
+it on purpose; never let it drift.
 
 The full history, including the Android/Play pipeline and CI, is at
 https://github.com/nergnezor/AngelBeach (pushed through commit 4cc4830).
