@@ -510,7 +510,7 @@ func _arm_blocks() -> void:
 			_armed[p] = true
 
 func _check_contacts() -> void:
-	if not ball.in_play:
+	if not ball.in_play or _tossing:
 		return
 	for p in players:
 		if p == last_toucher:
@@ -617,7 +617,13 @@ func _on_ball_hit_net() -> void:
 # and windowed disagree about when a rally starts, the headless run stops being
 # evidence about the game.
 const SERVE_WINDUP := 1.1
+# The toss is real, not a cut: the left hand lets go at 0.55 and the right hand
+# meets the ball at 0.78, so between those two phases the ball is genuinely in
+# free flight. The alternative -- spawning it at the strike -- is what made the
+# serve read as the ball teleporting into the swing.
+const SERVE_TOSS_PHASE := 0.55
 const SERVE_STRIKE_PHASE := 0.78
+const SERVE_CARRY_UP := 0.35      # the ball rides this far above the hip origin
 
 var serving := false
 var serve_t := 0.0
@@ -625,6 +631,10 @@ var server: Player = null
 var _served := false
 var _serve_from := Vector3.ZERO
 var _serve_vel := Vector3.ZERO
+# The ball is airborne during the toss but must not be playable: a receiver who
+# could dig the server's own toss is not a rule, it is a bug.
+var _tossing := false
+var _tossed := false
 
 func _serve() -> void:
 	touches = 0
@@ -659,6 +669,8 @@ func _serve() -> void:
 	_serve_vel = Contact.ballistic_velocity(from, to, 1.8)
 	serving = true
 	_served = false
+	_tossed = false
+	_tossing = false
 	serve_t = 0.0
 	_prev_ball_x = from.x
 
@@ -670,8 +682,20 @@ func _step_serve(dt: float) -> void:
 		server.serve_phase = minf(ph, 1.0)
 		server.gesture_blend = 1.0
 		_armed[server] = true
+	if not _tossed and ph >= SERVE_TOSS_PHASE:
+		# Up it goes, aimed to arrive at the strike point exactly when the hand
+		# does. velocity_for_flight_time is the solve keyed on TIME, which is the
+		# right question here: the toss has to meet a choreography beat, not an
+		# apex.
+		_tossed = true
+		_tossing = true
+		var carry := Vector3(_serve_from.x, Player.PLAYER_HEIGHT + SERVE_CARRY_UP,
+			_serve_from.z)
+		var t_free := (SERVE_STRIKE_PHASE - SERVE_TOSS_PHASE) * SERVE_WINDUP
+		ball.launch(carry, Ball.velocity_for_flight_time(carry, _serve_from, t_free))
 	if not _served and ph >= SERVE_STRIKE_PHASE:
 		_served = true
+		_tossing = false
 		ball.launch(_serve_from, _serve_vel)
 		# OnServeLaunched: the rally starts at the STRIKE, not at the windup.
 		state.start_rally()

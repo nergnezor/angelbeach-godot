@@ -64,14 +64,12 @@ teams:
   `Match.gd` evaluates one candidate, so its `playable` answers "not at this
   height", which is a different question. Move the candidate search into the
   planner first and the dive falls out of it.
-- **The serve toss.** The serve is a windup with no toss: the ball appears at
-  the strike rather than being thrown up at 0.55 and met at 0.78.
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
 `GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,
 `Ball.as`, and from `AIPlayer.as` the sticky hitter role, `ApproachForSpike`,
-the block, the split step, `ReactionDelay`, `PickAttackTarget` and the
-deep-ball role rule.
+the block, the split step, `ReactionDelay`, `PickAttackTarget`, the
+deep-ball role rule and the serve toss.
 
 Verified numerically identical where the port allowed it:
 
@@ -126,8 +124,8 @@ that would actually gain wall-clock but is also the most grown-together with
     godot --headless --path . res://src/match/Match.tscn
 
 Seeded, so it reproduces exactly. Compare stdout against the previous build.
-As of the Difficulty port: 136 CONTACT lines (50 of them spikes), 10 RALLY
-lines, 40 MOTIONSTATS lines. The MotionPlan/Contact move was verified
+As of the serve-toss port: 138 CONTACT lines, 9 RALLY lines, 36 MOTIONSTATS
+lines. The MotionPlan/Contact move was verified
 byte-identical this way, as was BallSim, and so were both presentation ports.
 
 The number moves whenever the RULES move, and that is the point — it moved
