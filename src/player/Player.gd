@@ -89,7 +89,19 @@ var has_meet := false
 var ball_pos := Vector3.ZERO
 var ball_live := false
 var extra_crouch := 0.0
+var face_target := Vector3.ZERO
+var has_face_target := false
 var _swing_t := -1.0
+
+# Someone else took the ball, or it went to the other side. Drop the stroke —
+# unless the swing is already going, in which case the follow-through owns the
+# arms until it finishes.
+func release_stroke() -> void:
+	if _swing_t >= 0.0:
+		return
+	hit_type = GestureIK.HIT_NONE
+	has_aim = false
+	has_meet = false
 
 # The moment the ball is actually struck. Everything before this is the windup;
 # the follow-through plays off this envelope, so a whiff retracts along the
@@ -208,9 +220,19 @@ func _apply_move_input(dt: float) -> void:
 # approach with an athletic ceiling — both from this session's yaw fix, which
 # took the measured peak from 1536 deg/s down to 450.
 func _update_facing(dt: float) -> void:
-	var raw := Vector3(vel.x, 0.0, vel.z)
-	if raw.length() < MOVE_EPSILON:
-		return
+	# Watch the ball you are going to play. Everything downstream still goes
+	# through the same rate-limited target, so this cannot outrun the turn
+	# ceiling — and it feeds move_dir_speed_scale, which is the point: a player
+	# who backpedals to a ball is meant to be slower than one who runs at it.
+	var raw: Vector3
+	if has_face_target:
+		raw = Vector3(face_target.x - position.x, 0.0, face_target.z - position.z)
+		if raw.length() < 0.05:
+			return
+	else:
+		raw = Vector3(vel.x, 0.0, vel.z)
+		if raw.length() < MOVE_EPSILON:
+			return
 	raw = raw.normalized()
 	var cur_yaw := yaw_of(_sm_want)
 	var new_yaw := yaw_of(raw)

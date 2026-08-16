@@ -25,7 +25,10 @@ const HIT_SERVE := 5
 # changes. One limit, set well above the fastest real gesture: the original
 # measured its hardest whip at 6-8 m/s, so 14 never clips choreography.
 const SINK_SPEED := 14.0
-const CROUCH_DROP := 0.30         # metres the hips sink at full crouch
+const CROUCH_DROP := 0.10         # metres the hips sink at full crouch. The rig's
+                                  # hips sit ~0.7 m up, so this is already a
+                                  # seventh of their height — 0.30 folded the
+                                  # body in half.
 
 var skel: Skeleton3D
 var player: Player
@@ -46,7 +49,7 @@ var _sink_init := false
 var _hand_r := Vector3.ZERO
 var _hand_l := Vector3.ZERO
 var _crouch := 0.0
-var _hip_rest_y := 0.0
+var bone_unit_m := 0.0
 
 func setup(s: Skeleton3D, p: Player) -> void:
 	skel = s
@@ -75,8 +78,13 @@ func _measure() -> void:
 	upper_len = sh.distance_to(el)
 	fore_len = upper_len
 	arm_reach = upper_len + fore_len
-	if b_hip >= 0:
-		_hip_rest_y = skel.get_bone_pose_position(b_hip).y
+	# Bone poses are in the rig's OWN units, not metres: this rig's hip rest is
+	# 2.106 on a body 1.45 m tall. The conversion is measurable rather than
+	# guessable — the forearm's rest offset is a known length in bone units and
+	# we just measured the same segment in metres.
+	var rest_len := skel.get_bone_rest(b_r_fore).origin.length()
+	if rest_len > 0.0001:
+		bone_unit_m = upper_len / rest_len
 
 func _process_modification() -> void:
 	_run(get_process_delta_time())
@@ -96,6 +104,20 @@ func _run(dt: float) -> void:
 		# bone instead. Not exactly zero: a degenerate basis makes the skinning
 		# matrix non-invertible.
 		skel.set_bone_pose_scale(b_head, Vector3(0.001, 0.001, 0.001))
+
+	# The crouch goes on BEFORE the anchors are read, using last frame's value.
+	# Reading a global pose flushes dirty bones, so the shoulder positions below
+	# already include the sink — no explicit transform update, which is not safe
+	# to call from inside a modifier anyway. FootLock runs after this and
+	# re-plants the feet, so the legs bend instead of the body sinking into sand.
+	# The crouch is computed and smoothed but NOT applied, after two attempts that
+	# both looked worse than leaving it alone. Translating the hip bone shears the
+	# torso on this rig whether the offset is taken from the animated pose or from
+	# rest — the first also stacks on itself every frame, because these animations
+	# do not key the hip's translation, so the modifier's own write survives into
+	# the next one. Doing this properly means bending the spine chain rather than
+	# sliding its root, which is a bigger job than a knee dip is worth right now.
+	# The value is kept live so that work has something to drive.
 
 	var sh_r := _bone_world(b_r_arm)
 	var sh_l := _bone_world(b_l_arm)
@@ -146,13 +168,6 @@ func _run(dt: float) -> void:
 	# Sinking fast and rising lazy: a slow release reads as a held stance.
 	var err := want_crouch - _crouch
 	_crouch += err * minf((8.0 if err > 0.0 else 3.0) * dt, 1.0)
-
-	# NOTE: the crouch channel is computed but not applied to the hips yet.
-	# set_bone_pose_position works in the rig's own bone units, not metres — this
-	# rig's hip rest is 2.106 against a body 1.45 m tall — and driving it from a
-	# modifier needs a transform update mid-modification. Both are worth doing
-	# properly rather than approximately; until then the legs keep the animation's
-	# own stance and only the arms are driven.
 
 	# The poles are the whole reason a bump reads as a locked-out platform and a
 	# spike as a high elbow leading the hand. Dropping them leaves the solver to

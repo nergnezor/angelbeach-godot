@@ -73,6 +73,10 @@ const HUMAN_INDEX := 0            # team 0's front player is yours
 var camera: Camera3D
 var hud: Label
 var score := [0, 0]
+# Players that armed a stroke this step. Anyone missing from it is no longer
+# the designated contact, and a stroke nobody clears freezes the pose forever —
+# players stood holding a bump platform for whole rallies.
+var _armed := {}
 
 func _build_presentation() -> void:
 	add_child(Court.new())
@@ -87,12 +91,12 @@ func _build_presentation() -> void:
 			p.mark_as_human()
 
 	camera = Camera3D.new()
-	# Three-quarter view from behind your own corner. Straight down the long
-	# axis lines all four players up and hides the depth that the whole movement
-	# budget is about; from the corner you can see who is going to reach a ball.
-	camera.position = Vector3(-13.5, 7.5, 9.5)
-	camera.look_at_from_position(camera.position, Vector3(0.5, 1.2, 0.0), Vector3.UP)
-	camera.fov = 58.0
+	# Behind your own base line, 3 m up: a player's-eye view down the court.
+	# Low enough that the net reads as a wall you have to clear rather than a
+	# line on a plan, which is the whole point of the third touch.
+	camera.position = Vector3(-COURT_X - 5.0, 3.0, 0.0)
+	camera.look_at_from_position(camera.position, Vector3(0.0, 1.6, 0.0), Vector3.UP)
+	camera.fov = 60.0
 	add_child(camera)
 
 	var layer := CanvasLayer.new()
@@ -137,6 +141,9 @@ func _human_drive(p: Player) -> void:
 		var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, target_y)
 		if bt[0]:
 			_arm_stroke(p, bt[1], bt[2])
+			_armed[p] = true
+			p.face_target = bt[1]
+			p.has_face_target = true
 
 func _physics_process(dt: float) -> void:
 	if not headless:
@@ -162,6 +169,7 @@ func _step(dt: float) -> void:
 		return
 	if serving:
 		_step_serve(dt)
+	_armed.clear()
 	for p in players:
 		_drive(p, dt)
 		p.step(dt)
@@ -173,6 +181,9 @@ func _step(dt: float) -> void:
 	_check_net_crossing()
 	if not headless:
 		_arm_blocks()
+		for p in players:
+			if not _armed.has(p):
+				p.release_stroke()
 		_update_hud()
 	# `serving` guards the windup, where the ball is deliberately not in play yet
 	# and would otherwise read as having hit the sand on the first frame.
@@ -185,16 +196,19 @@ func _drive(p: Player, dt: float) -> void:
 		_human_drive(p)
 		return
 	if not ball.in_play:
+		p.has_face_target = false
 		p.move_toward_ground(_home(p))
 		return
 	var mine: bool = _side_of(ball.position.x) == p.team
 	if not mine:
+		p.has_face_target = false
 		p.move_toward_ground(_home(p))
 		return
 	# Where does the ball next cross contact height, and can I be there?
 	var target_y: float = SET_Y if touches == 1 else BUMP_Y
 	var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, target_y)
 	if not bt[0]:
+		p.has_face_target = false
 		p.move_toward_ground(_home(p))
 		return
 	var contact: Vector3 = bt[1]
@@ -202,6 +216,7 @@ func _drive(p: Player, dt: float) -> void:
 	# The digger is not the setter is not the attacker: whoever touched last
 	# steps aside. This is what stops double contacts and fourth-touch faults.
 	if p == last_toucher:
+		p.has_face_target = false
 		p.move_toward_ground(_home(p))
 		return
 	var mate := _teammate(p)
@@ -213,14 +228,18 @@ func _drive(p: Player, dt: float) -> void:
 		var margin: float = ROLE_DEAD_BAND if p.is_chasing else -ROLE_DEAD_BAND
 		p.is_chasing = my_d <= their_d + margin
 		if not p.is_chasing:
+			p.has_face_target = false
 			p.move_toward_ground(_home(p))
 			return
 	var flat := Vector3(contact.x - p.position.x, 0.0, contact.z - p.position.z)
 	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
 	p.move_toward_ground(contact, plan["speed_fraction"])
+	p.face_target = contact
+	p.has_face_target = true
 	if not headless:
 		_arm_stroke(p, contact, tau)
+		_armed[p] = true
 
 # Which stroke is this player about to play, and where is it aimed? The stroke
 # follows the same touch count the protocol enforces, so the pose can never
@@ -265,6 +284,7 @@ func _arm_blocks() -> void:
 			p.ball_live = true
 			p.aim = Vector3(_sign(p.team) * 4.0, 0.0, p.position.z)
 			p.has_aim = true
+			_armed[p] = true
 
 func _check_contacts() -> void:
 	if not ball.in_play:
@@ -377,6 +397,7 @@ func _step_serve(dt: float) -> void:
 		server.hit_type = GestureIK.HIT_SERVE
 		server.serve_phase = minf(ph, 1.0)
 		server.gesture_blend = 1.0
+		_armed[server] = true
 	if not _served and ph >= SERVE_STRIKE_PHASE:
 		_served = true
 		ball.launch(_serve_from, _serve_vel)
