@@ -64,6 +64,12 @@ const MODEL_YAW_OFFSET := PI * 0.5
 # Measured in Spike2: the authored run cycle carries 151.5 cm/s at rate 1.0.
 const CYCLE_SPEED := 1.515
 const RUN_THRESHOLD := 0.35
+# The rig's chest is 0.83 m across and 0.56 m deep on a body 1.45 m tall —
+# two and a half times a human torso at that height, and the reason four
+# players on a court read as flying slabs rather than athletes. Measured per
+# bone with src/debug/Bones.tscn, not eyeballed. 0.6 takes the chest to
+# 0.50 x 0.34 x 0.34, which is still broad-shouldered against a 0.33 m hip.
+const TORSO_SCALE := 0.6
 
 var human := false
 var view: Node3D
@@ -132,6 +138,9 @@ func setup_view(scene: PackedScene) -> void:
 	skel = _find(view, "Skeleton3D") as Skeleton3D
 	anim = _find(view, "AnimationPlayer") as AnimationPlayer
 	if skel != null:
+		# Before the gesture solver, which measures the arm off the live pose:
+		# reshape first and it measures the body it is actually going to drive.
+		_slim_torso()
 		# Order matters: the gesture's crouch channel moves the hips, and the
 		# feet have to be planted after that. Modifiers run in child order.
 		gesture = GestureIK.new()
@@ -142,6 +151,29 @@ func setup_view(scene: PackedScene) -> void:
 		skel.add_child(foot_lock)
 	if anim != null:
 		anim.play("idle")
+
+# Shrink the chest. One skinned mesh, so there is no torso node to scale — the
+# handle is the bone, exactly as with the collapsed head in GestureIK.
+#
+# A one-off write, not a per-frame one: none of the rig's eight animations keys
+# a scale track (checked with src/debug/Bones.tscn — they key rotation, plus the
+# hip's position), so nothing overwrites this afterwards.
+#
+# Uniform, because a non-uniform parent scale shears every child whose rest is
+# rotated off-axis, which the arms are in every frame of every animation. The
+# arms are then scaled back up by the reciprocal so that only the torso shrinks:
+# the shoulders come inboard and down with the chest, but the arms keep their
+# length, and a volleyball player's reach with it.
+func _slim_torso() -> void:
+	var chest := skel.find_bone("chest")
+	if chest < 0:
+		return
+	skel.set_bone_pose_scale(chest, Vector3.ONE * TORSO_SCALE)
+	for n in ["r-arm", "l-arm"]:
+		var b := skel.find_bone(n)
+		if b >= 0:
+			skel.set_bone_pose_scale(b, Vector3.ONE / TORSO_SCALE)
+	skel.force_update_all_bone_transforms()
 
 # Four identical rigs on a beige court is unreadable — tint yours so you can
 # find yourself without hunting.

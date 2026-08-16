@@ -35,6 +35,19 @@ var rally_time := 0.0
 var total_time := 0.0
 const RALLY_MAX := 25.0
 
+# The rules, ported from GameState.as. In BOTH paths on purpose: scoring used to
+# be windowed-only so the headless stdout stayed comparable, but nothing here
+# prints, and the serving team is now a function of who scored — so a headless
+# run that did not score would serve from the wrong side and stop being evidence
+# about the game.
+var state := MatchState.new()
+
+# A serve has to go directly over. From the moment it leaves the hand until it
+# clears the tape it is still "a serve", and landing or hitting the net in that
+# window is a service fault rather than an ordinary rally end.
+var _serve_phase := false
+var _serving_team_this_serve := 0
+
 func _ready() -> void:
 	# DisplayServer, not the command line: Godot consumes --headless before
 	# OS.get_cmdline_args() sees it, and OS.has_feature("headless") is false in
@@ -72,7 +85,6 @@ const HUMAN_INDEX := 0            # team 0's front player is yours
 
 var camera: Camera3D
 var hud: Label
-var score := [0, 0]
 # Players that armed a stroke this step. Anyone missing from it is no longer
 # the designated contact, and a stroke nobody clears freezes the pose forever —
 # players stood holding a bump platform for whole rallies.
@@ -113,8 +125,10 @@ func _build_presentation() -> void:
 func _update_hud() -> void:
 	if hud == null:
 		return
-	hud.text = "YOU %d  —  %d CPU\ntouch %d/3\n\narrows / WASD to move, space to jump" % [
-		score[0], score[1], touches]
+	var serve_mark := "*" if state.serving_team == MatchState.Team.A else " "
+	hud.text = "YOU %d%s —  %d CPU   set %d   %s\ntouch %d/3\n\narrows / WASD to move, space to jump" % [
+		state.score_a, serve_mark, state.score_b, state.current_set,
+		state.sets_string(), touches]
 
 # Your player takes the stick; the other three keep the budget-driven AI.
 # Input is camera-relative and derived from the camera's own basis rather than
@@ -188,7 +202,20 @@ func _step(dt: float) -> void:
 	# `serving` guards the windup, where the ball is deliberately not in play yet
 	# and would otherwise read as having hit the sand on the first frame.
 	if not ball.in_play and not serving:
-		_end_rally("floor")
+		_on_ball_hit_floor()
+
+# OnBallHitFloor, ported. Which team scores is not simply "the other side": a
+# serve that comes down without ever clearing the tape is a service fault, and
+# the point goes to the receivers regardless of where it landed.
+func _on_ball_hit_floor() -> void:
+	var pos := ball.position
+	if _serve_phase:
+		_serve_phase = false
+		_end_rally("serve_fault_floor", 1 - _serving_team_this_serve)
+	elif pos.x < 0.0:
+		_end_rally("floor_A x=%.2f z=%.2f" % [pos.x, pos.z], 1)
+	else:
+		_end_rally("floor_B x=%.2f z=%.2f" % [pos.x, pos.z], 0)
 
 # --- AI: who takes it, and how fast do they need to run? ---------------------
 func _drive(p: Player, dt: float) -> void:
@@ -301,13 +328,14 @@ func _check_contacts() -> void:
 		return
 
 func _do_contact(p: Player) -> void:
-	if p.team != last_touch_team:
-		touches = 0
-	touches += 1
+	# RegisterTouch owns the count now, so the rule lives in one place and the
+	# fourth touch reads as a rules decision rather than a local counter.
+	var legal := state.register_touch(p.team as MatchState.Team)
+	touches = state.touches_this_rally
 	last_touch_team = p.team
 	last_toucher = p
-	if touches > 3:
-		_end_rally("four_touches")
+	if not legal:
+		_end_rally("touches_A" if p.team == 0 else "touches_B", 1 - p.team)
 		return
 
 	var from := ball.position
@@ -338,12 +366,38 @@ func _do_contact(p: Player) -> void:
 		% [touches, kind, p.team, from.x, from.y, from.z, to.x, to.y, to.z])
 	rally_seq += " %s%d:%s" % ["A" if p.team == 0 else "B", touches, kind]
 
+# CheckNetCollision, ported. The net is a real obstacle now rather than a number
+# the contact solver aims over: crossing the plane below the tape stops the ball
+# instead of letting it pass through, which is what makes a service fault
+# possible at all.
 func _check_net_crossing() -> void:
 	if not ball.in_play:
 		return
-	if sign(ball.position.x) != sign(_prev_ball_x) and _prev_ball_x != 0.0:
+	var prev_x := _prev_ball_x
+	var x := ball.position.x
+	_prev_ball_x = x
+	if (prev_x < 0.0) == (x < 0.0):
+		return
+	if ball.position.y < Court.NET_TOP + Ball.RADIUS:
+		# Into the net. Most of the pace goes out of it and it drops on the side
+		# it came from.
+		ball.vel.x = -ball.vel.x * 0.3
+		var off := Court.NET_HALF_THICK + Ball.RADIUS
+		ball.position.x = -off if x < 0.0 else off
+		_prev_ball_x = ball.position.x
+		_on_ball_hit_net()
+	else:
+		# Cleared it cleanly, so a serve in flight is now good.
+		_serve_phase = false
 		rally_crossings += 1
-	_prev_ball_x = ball.position.x
+
+func _on_ball_hit_net() -> void:
+	# Only a SERVE into the net is a fault. Mid-rally the ball is simply live
+	# again on the side it rebounded to.
+	if not _serve_phase:
+		return
+	_serve_phase = false
+	_end_rally("serve_net", 1 - _serving_team_this_serve)
 
 # The serve is a WINDUP, not an instant launch. The ball leaves the hand at
 # SERVE_STRIKE_PHASE — the same choreography boundary the original uses — so the
@@ -376,13 +430,20 @@ func _serve() -> void:
 		# Eyes across the net, so the first step's anisotropy is meaningful.
 		p.facing = Vector3(-_sign(p.team), 0.0, 0.0)
 		p._sm_want = p.facing
-	var from := Vector3(-COURT_X + 0.4, 2.0, 0.0)
+	# Whoever won the last point serves — rally scoring, so the side is not a
+	# rotation but a consequence. This used to be hard-coded to team 0, which
+	# meant team 1 never served and the receiving half of the game was never
+	# exercised.
+	var team := int(state.serving_team)
+	var s := _sign(team)
+	var from := Vector3(s * (COURT_X - 0.4), 2.0, 0.0)
 	# Somebody has to hit it. The back player of the serving team stands behind
 	# their own base line, where the ball leaves from.
-	server = _back_player(0)
+	server = _back_player(team)
 	if server != null:
 		server.position = Vector3(from.x, Player.PLAYER_HEIGHT, from.z)
-	var to := Vector3(4.0, BUMP_Y, randf_range(-2.0, 2.0))
+	var to := Vector3(-s * 4.0, BUMP_Y, randf_range(-2.0, 2.0))
+	_serving_team_this_serve = team
 	_serve_from = from
 	_serve_vel = Contact.ballistic_velocity(from, to, 1.8)
 	serving = true
@@ -401,6 +462,9 @@ func _step_serve(dt: float) -> void:
 	if not _served and ph >= SERVE_STRIKE_PHASE:
 		_served = true
 		ball.launch(_serve_from, _serve_vel)
+		# OnServeLaunched: the rally starts at the STRIKE, not at the windup.
+		state.start_rally()
+		_serve_phase = true
 	if ph >= 1.0:
 		serving = false
 		if not headless and server != null:
@@ -413,21 +477,35 @@ func _back_player(team: int) -> Player:
 			return q
 	return null
 
-func _end_rally(reason: String) -> void:
+# scoring_team of -1 means nobody scored. Only "timeout" uses it: that is the
+# harness's safety valve for a rally that will not end, not a rule, so it must
+# not hand out a point or move the serve.
+func _end_rally(reason: String, scoring_team: int = -1) -> void:
 	rallies_done += 1
 	print("RALLY end reason=%s crossings=%d seq=[%s ]" % [reason, rally_crossings, rally_seq])
 	for p in players:
 		p.emit_motion_stats()
-	# Scoring is windowed-only on purpose: the headless run's stdout is the
-	# acceptance baseline, and a score line in it would break the comparison.
+	_serve_phase = false
+	if scoring_team >= 0:
+		state.add_point(scoring_team as MatchState.Team)
 	if not headless:
-		if reason == "floor":
-			# The ball is down. The point goes to the side it did NOT land on.
-			score[1 - _side_of(ball.position.x)] += 1
 		_update_hud()
-		_serve()
-		return
-	if rallies_done >= 12:
+
+	if state.phase == MatchState.Phase.MATCH_OVER:
+		print("MATCH OVER winner=%s sets=%d-%d" % [
+			"A" if state.winner == MatchState.Team.A else "B",
+			state.sets_won_a, state.sets_won_b])
+		if headless:
+			_done = true
+			return
+		# The windowed game just starts a new match rather than sitting on a
+		# dead court.
+		state.reset()
+	elif state.phase == MatchState.Phase.SET_OVER:
+		print("SET OVER set=%d sets=%d-%d" % [
+			state.current_set, state.sets_won_a, state.sets_won_b])
+
+	if headless and rallies_done >= 12:
 		print("MATCH DONE")
 		_done = true
 		return
