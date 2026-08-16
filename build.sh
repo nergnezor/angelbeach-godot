@@ -8,12 +8,25 @@
 # exactly the thing that changes, which is what hot reload keys on.
 set -euo pipefail
 cd "$(dirname "$0")/rust"
+
+# Stage by rename, never by overwrite. A running Godot -- the game, or the
+# headless editor that serves the LSP -- has this .so mmap'd. `cp` rewrites
+# the bytes under the same inode, so the next page fault into the file reads
+# a page that no longer matches the mapping and the kernel kills the process
+# with SIGBUS (exit 135). `mv` within bin/ is rename(2): the old inode stays
+# alive for whoever already mapped it, and only new processes see the new
+# file. Same fix that lets you replace a running binary on Linux.
+stage() {
+    local src=$1 dst=$2
+    install -m 755 "$src" "$dst.new"
+    mv -f "$dst.new" "$dst"
+    echo "staged ${dst#../}"
+}
+
 if [ "${1:-}" = "--release" ]; then
     cargo build --release
-    cp -f target/release/libangelbeach.so ../bin/libangelbeach.release.so
-    echo "staged bin/libangelbeach.release.so"
+    stage target/release/libangelbeach.so ../bin/libangelbeach.release.so
 else
     cargo build
-    cp -f target/debug/libangelbeach.so ../bin/libangelbeach.debug.so
-    echo "staged bin/libangelbeach.debug.so"
+    stage target/debug/libangelbeach.so ../bin/libangelbeach.debug.so
 fi

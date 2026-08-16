@@ -225,6 +225,9 @@ func _on_ball_hit_floor() -> void:
 
 # --- AI: who takes it, and how fast do they need to run? ---------------------
 func _drive(p: Player, dt: float) -> void:
+	# Cleared here and re-asserted only on the path that commits to the ball, so
+	# the split step cancels itself the moment this player becomes the digger.
+	p.is_reaching = false
 	if p.human:
 		_human_drive(p)
 		return
@@ -272,6 +275,7 @@ func _drive(p: Player, dt: float) -> void:
 	var flat := Vector3(contact.x - p.position.x, 0.0, contact.z - p.position.z)
 	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
+	p.is_reaching = true
 	p.move_toward_ground(contact, plan["speed_fraction"])
 	p.face_target = contact
 	p.has_face_target = true
@@ -440,6 +444,14 @@ func _do_contact(p: Player) -> void:
 	print("  CONTACT t=%d %s by team%d at (%.2f,%.2f,%.2f) -> (%.2f,%.2f,%.2f)"
 		% [touches, kind, p.team, from.x, from.y, from.z, to.x, to.y, to.z])
 	rally_seq += " %s%d:%s" % ["A" if p.team == 0 else "B", touches, kind]
+	# The other split-step trigger, and it is deliberately ONLY the attack: the
+	# source fired on their receive and set and attack too, which stacked three
+	# dips in a row and read as the body shaking before we ever dug the ball.
+	# The attack is the touch that drives the ball toward us.
+	if touches == 3:
+		for q in players:
+			if q.team != p.team:
+				q.start_split_step()
 
 # CheckNetCollision, ported. The net is a real obstacle now rather than a number
 # the contact solver aims over: crossing the plane below the tape stops the ball
@@ -540,6 +552,11 @@ func _step_serve(dt: float) -> void:
 		# OnServeLaunched: the rally starts at the STRIKE, not at the windup.
 		state.start_rally()
 		_serve_phase = true
+		# The ball just went live against the receivers, which is one of the two
+		# moments a defender split-steps.
+		for p in players:
+			if p.team != _serving_team_this_serve:
+				p.start_split_step()
 	if ph >= 1.0:
 		serving = false
 		if not headless and server != null:

@@ -262,6 +262,39 @@ var _land_absorb_t := 0.0
 var _land_absorb_depth := 0.5
 var _step_timer := 0.0
 
+# --- Split step ---------------------------------------------------------------
+# The signature read-and-react habit of elite defenders: a quick loading dip with
+# planted feet the instant the OPPONENT strikes, then explode toward the read.
+#
+# Two things the source learned the hard way. It fires ONCE, on the attacker's
+# swing, not on every touch of their possession — firing on their receive and set
+# and attack stacked three dips in a row and read as the body shaking up and down
+# before we ever dug the ball. And it is cancelled the moment we commit to a
+# reach, because letting the rise phase overlap the dig produced a fast up-down
+# bob right at the meet: a real player with no time to gather simply skips the
+# hop.
+const SPLIT_STEP_DURATION := 0.26
+const SPLIT_STEP_MOVE_SCALE := 0.12   # feet are planted; only a shuffle
+
+var split_step_t := 0.0
+var is_reaching := false
+
+func start_split_step() -> void:
+	if is_reaching:
+		return
+	split_step_t = SPLIT_STEP_DURATION
+
+func _update_split_step(dt: float) -> void:
+	if is_reaching:
+		split_step_t = 0.0
+		return
+	if split_step_t > 0.0:
+		split_step_t -= dt
+		# Sink and rise across the duration — half a sine, so it returns to
+		# standing on its own rather than needing a release.
+		var prog := 1.0 - split_step_t / SPLIT_STEP_DURATION
+		extra_crouch = maxf(extra_crouch, 0.5 * sin(prog * PI))
+
 func is_diving() -> bool:
 	return dive_t > 0.0
 
@@ -339,6 +372,7 @@ func step(dt: float) -> void:
 	if _crouch_hold_t <= 0.0:
 		held_crouch = maxf(0.0, held_crouch - CROUCH_DECAY * dt)
 
+	_update_split_step(dt)
 	_update_dive(dt)
 	_update_jump_load(dt)
 	if not is_diving():
@@ -455,6 +489,10 @@ func move_toward_ground(target: Vector3, speed_cap: float = 1.0) -> void:
 		move_input = Vector3.ZERO
 		return
 	var scale: float = minf(clampf(dist / 1.5, 0.25, 1.0), speed_cap)
+	# Feet planted through the read: only a shuffle is allowed until the dip
+	# releases.
+	if split_step_t > 0.0:
+		scale *= SPLIT_STEP_MOVE_SCALE
 	move_input = d.normalized() * scale
 
 
