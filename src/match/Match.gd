@@ -264,6 +264,11 @@ func _drive(p: Player, dt: float) -> void:
 			p.has_face_target = false
 			p.move_toward_ground(_home(p))
 			return
+	# The third touch is an attack, and an attack is a jump. Only if the set
+	# actually reaches strike height — otherwise fall through and play it over
+	# from the ground.
+	if touches == 2 and p.grounded and _approach_for_spike(p):
+		return
 	var flat := Vector3(contact.x - p.position.x, 0.0, contact.z - p.position.z)
 	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
@@ -273,6 +278,63 @@ func _drive(p: Player, dt: float) -> void:
 	if not headless:
 		_arm_stroke(p, contact, tau)
 		_armed[p] = true
+
+# ApproachForSpike, ported from AIPlayer.as. Returns false when there is no jump
+# attack available, so the caller can play the ball off the ground instead.
+#
+# The strike height is derived, not chosen: it is where the hands reach at the
+# top of a loaded jump. Rise = v^2/2g = 6.6^2 / 38 = 1.15 m, plus the hip origin
+# at 0.9 and 1.23 m of reach above it.
+const SPIKE_STRIKE_Y := Player.PLAYER_HEIGHT \
+	+ (Player.LOADED_JUMP_VELOCITY * Player.LOADED_JUMP_VELOCITY) / (2.0 * 19.0) + 1.23
+const APPROACH_BACK := 2.0        # the run-up starts this far behind the plant
+const PLANT_OFFSET := 0.35        # plant our-side of the strike, so contact is
+                                  # in front of the shoulder, not on the head
+const JUMP_RADIUS := 0.90
+const JUMP_EPS := 0.05
+
+func _approach_for_spike(p: Player) -> bool:
+	var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, SPIKE_STRIKE_Y)
+	if not bt[0]:
+		return false
+	var strike: Vector3 = bt[1]
+	var tau: float = bt[2]
+	if absf(strike.x) > COURT_X or absf(strike.z) > COURT_Z:
+		return false
+	var time_to_apex: float = Player.LOADED_JUMP_VELOCITY / 19.0
+	var plant := Vector3(strike.x + _sign(p.team) * PLANT_OFFSET,
+		Player.PLAYER_HEIGHT, strike.z)
+	var to_plant := Vector3(plant.x - p.position.x, 0.0, plant.z - p.position.z)
+	var dist := to_plant.length()
+	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(to_plant)
+	var sprint_time := dist / maxf(eff_vmax, 0.01) + Tuning.get_first_step_lag()
+
+	p.face_target = ball.position
+	p.has_face_target = true
+
+	if tau > sprint_time + time_to_apex + 0.25:
+		# Early. Wait coiled at the approach start behind the plant, eyes on the
+		# ball — a hitter who drifts onto the plant early has nothing left to
+		# convert into height.
+		var start := Vector3(plant.x + _sign(p.team) * APPROACH_BACK,
+			Player.PLAYER_HEIGHT, plant.z)
+		p.move_toward_ground(start, 0.8)
+		p.request_crouch(0.25)
+		return true
+
+	# GO. Sprint only outside the jump radius: driving at full speed through the
+	# plant made the hitter overshoot and shuttle back and forth over it while
+	# waiting for the jump window.
+	p.move_toward_ground(plant, 1.0 if dist > JUMP_RADIUS else 0.35)
+	# Leave the ground one apex-time before the ball arrives, and the gather
+	# happens BEFORE takeoff so the decision fires one load earlier. The margin
+	# is deliberately tiny and late-biased: an early jump tops out while the ball
+	# is still above the hands, which is a guaranteed whiff, where a late one
+	# meets it a touch lower but still inside the envelope.
+	if dist < JUMP_RADIUS and tau <= time_to_apex + Player.JUMP_LOAD_DURATION + JUMP_EPS:
+		p.move_input = Vector3.ZERO
+		p.start_loaded_jump()
+	return true
 
 # Which stroke is this player about to play, and where is it aimed? The stroke
 # follows the same touch count the protocol enforces, so the pose can never
@@ -356,7 +418,14 @@ func _do_contact(p: Player) -> void:
 		kind = "Set"
 		var mate := _teammate(p)
 		var z: float = mate.position.z if mate != null else 0.0
-		to = Vector3(_sign(p.team) * 1.8, SET_Y + 0.4, clampf(z, -COURT_Z + 0.8, COURT_Z - 0.8))
+		# The set has to be JUMPABLE. It aimed at 2.50 m while a loaded jump puts
+		# the hands at 3.28, so the ball never once reached strike height and the
+		# attacker had nothing to rise to — every third touch was played off the
+		# ground. Aimed a little under the apex on purpose: the source is explicit
+		# that an early jump tops out above the ball and whiffs, where a late one
+		# meets it lower but still inside the envelope.
+		to = Vector3(_sign(p.team) * 1.8, SPIKE_STRIKE_Y - 0.35,
+			clampf(z, -COURT_Z + 0.8, COURT_Z - 0.8))
 	else:
 		# Attack: must clear the tape and land in their court.
 		kind = "Spike"

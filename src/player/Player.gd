@@ -152,27 +152,36 @@ func setup_view(scene: PackedScene) -> void:
 	if anim != null:
 		anim.play("idle")
 
-# Shrink the chest. One skinned mesh, so there is no torso node to scale — the
+# Resize the chest. One skinned mesh, so there is no torso node to scale — the
 # handle is the bone, exactly as with the collapsed head in GestureIK.
 #
 # A one-off write, not a per-frame one: none of the rig's eight animations keys
-# a scale track (checked with src/debug/Bones.tscn — they key rotation, plus the
-# hip's position), so nothing overwrites this afterwards.
+# a scale track, and none keys a position track for anything hanging off the
+# chest (checked with src/debug/Bones.tscn — they key rotation, plus the hip's
+# and the head's position), so nothing overwrites any of this afterwards.
 #
 # Uniform, because a non-uniform parent scale shears every child whose rest is
-# rotated off-axis, which the arms are in every frame of every animation. The
-# arms are then scaled back up by the reciprocal so that only the torso shrinks:
-# the shoulders come inboard and down with the chest, but the arms keep their
-# length, and a volleyball player's reach with it.
+# rotated off-axis, which the arms are in every frame of every animation.
+#
+# Everything hanging off the chest — the two arms and the neck — is then pinned
+# back to where it sits at rest, by the reciprocal on both the offset and the
+# scale. That is what makes the knob mean "the torso, and only the torso":
+# shoulders stay at their own width and height, arms keep their length and a
+# volleyball player's reach with it, and at scale zero the chest leaves without
+# taking the arms with it.
 func _slim_torso() -> void:
 	var chest := skel.find_bone("chest")
 	if chest < 0:
 		return
-	skel.set_bone_pose_scale(chest, Vector3.ONE * TORSO_SCALE)
-	for n in ["r-arm", "l-arm"]:
-		var b := skel.find_bone(n)
-		if b >= 0:
-			skel.set_bone_pose_scale(b, Vector3.ONE / TORSO_SCALE)
+	# Not exactly zero: a degenerate basis makes the skinning matrix
+	# non-invertible, the same reason the collapsed head stops at 0.001.
+	var s := maxf(TORSO_SCALE, 0.001)
+	skel.set_bone_pose_scale(chest, Vector3.ONE * s)
+	for b in skel.get_bone_count():
+		if skel.get_bone_parent(b) != chest:
+			continue
+		skel.set_bone_pose_position(b, skel.get_bone_rest(b).origin / s)
+		skel.set_bone_pose_scale(b, Vector3.ONE / s)
 	skel.force_update_all_bone_transforms()
 
 # Four identical rigs on a beige court is unreadable — tint yours so you can
