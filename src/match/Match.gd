@@ -63,6 +63,10 @@ func _ready() -> void:
 		var p := Player.new()
 		p.team = 0 if i < 2 else 1
 		p.role_front = (i % 2 == 0)
+		# GameMode.as hands each AI its own Difficulty: 0.80 at the net, 0.75 in
+		# the back. It is not decoration — it sets move speed, decision cadence
+		# and aim spread together.
+		p.set_difficulty(0.80 if p.role_front else 0.75)
 		add_child(p)
 		players.append(p)
 	if not headless:
@@ -277,8 +281,23 @@ func _drive(p: Player, dt: float) -> void:
 		p.has_face_target = false
 		_go(p, _home(p))
 		return
+	# IsDeep: a ball coming down behind 3.5 m is serve receive, and it belongs to
+	# the back player by role rather than by distance. The sticky rule alone had
+	# whoever happened to be nearer turning and chasing it, which is how you end
+	# up with the net player digging from the base line.
+	var fresh: bool = last_touch_team != p.team
+	var deep: bool = _sign(p.team) * contact.x > 3.5
+	var mine_by_role := false
+	if fresh and deep:
+		if p.role_front:
+			p.is_chasing = false
+			p.has_face_target = false
+			_go(p, _home(p))
+			return
+		mine_by_role = true
+		p.is_chasing = true
 	var mate := _teammate(p)
-	if mate != null and mate != last_toucher:
+	if not mine_by_role and mate != null and mate != last_toucher:
 		var my_d := Vector2(contact.x - p.position.x, contact.z - p.position.z).length()
 		var their_d := Vector2(contact.x - mate.position.x, contact.z - mate.position.z).length()
 		# Sticky role with a dead band, as in the original: a bare comparison
@@ -295,7 +314,7 @@ func _drive(p: Player, dt: float) -> void:
 	if touches == 2 and p.grounded and _approach_for_spike(p):
 		return
 	var flat := Vector3(contact.x - p.position.x, 0.0, contact.z - p.position.z)
-	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(flat)
+	var eff_vmax := p.move_speed * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
 	p.is_reaching = true
 	_go(p, contact, plan["speed_fraction"])
@@ -304,6 +323,17 @@ func _drive(p: Player, dt: float) -> void:
 	if not headless:
 		_arm_stroke(p, contact, tau)
 		_armed[p] = true
+
+# PickAttackTarget: the opponent's open court, away from their players. Both
+# depth and accuracy scale with Difficulty, so a weaker attacker hits shorter
+# AND sprays wider — one number, two tells.
+func _pick_attack_target(p: Player) -> Vector3:
+	var target_x := -_sign(p.team) * lerpf(3.5, 7.0, p.difficulty)
+	# Aim at whichever half is less defended, approximated as away from the side
+	# the attacker is coming from.
+	var aim_z := -2.5 if p.position.z > 0.0 else 2.5
+	var err := randf_range(-1.8, 1.8) * (1.0 - p.difficulty)
+	return Vector3(target_x, 0.0, clampf(aim_z + err, -3.9, 3.9))
 
 # Every AI move goes through here so the goal is remembered as well as acted on.
 func _go(p: Player, goal: Vector3, speed: float = 1.0) -> void:
@@ -404,7 +434,7 @@ func _approach_for_spike(p: Player) -> bool:
 		Player.PLAYER_HEIGHT, strike.z)
 	var to_plant := Vector3(plant.x - p.position.x, 0.0, plant.z - p.position.z)
 	var dist := to_plant.length()
-	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(to_plant)
+	var eff_vmax := p.move_speed * p.move_dir_speed_scale(to_plant)
 	var sprint_time := dist / maxf(eff_vmax, 0.01) + Tuning.get_first_step_lag()
 
 	p.face_target = ball.position
@@ -527,7 +557,7 @@ func _do_contact(p: Player) -> void:
 	else:
 		# Attack: must clear the tape and land in their court.
 		kind = "Spike"
-		to = Vector3(-_sign(p.team) * 4.2, 0.0, randf_range(-COURT_Z + 0.6, COURT_Z - 0.6))
+		to = _pick_attack_target(p)
 	ball.vel = Contact.placement_velocity(from, to, touches == 3)
 	if not headless:
 		# The ball has actually been struck: from here the follow-through plays.

@@ -284,7 +284,17 @@ var _step_timer := 0.0
 # opponent's strike, and a dip that arrives a tick late is not a read.
 const PERCEPTION_LATENCY := 0.16
 
+# Difficulty drives three things at once, and that is the whole idea: a weaker
+# opponent runs a little slower, decides a little later, and aims a little
+# looser. It is one number, not three sliders that can disagree.
+var difficulty := 0.75
+var move_speed := MOVE_SPEED
 var reaction_delay := 0.1175      # lerp(0.35, 0.04, difficulty 0.75)
+
+func set_difficulty(d: float) -> void:
+	difficulty = clampf(d, 0.0, 1.0)
+	move_speed = 4.20 + difficulty * 2.20     # 420 + Difficulty * 220 cm/s
+	reaction_delay = lerpf(0.35, 0.04, difficulty)
 var reaction_t := 0.0
 var perception_t := 0.0
 var percept_stamp := -12345
@@ -361,8 +371,8 @@ func _update_dive(dt: float) -> void:
 	if dive_t > 0.0:
 		dive_t -= dt
 		# The dive owns the velocity and the facing while it is active.
-		vel.x = dive_dir.x * MOVE_SPEED * DIVE_SPEED_MUL
-		vel.z = dive_dir.z * MOVE_SPEED * DIVE_SPEED_MUL
+		vel.x = dive_dir.x * move_speed * DIVE_SPEED_MUL
+		vel.z = dive_dir.z * move_speed * DIVE_SPEED_MUL
 		face_target = position + dive_dir
 		has_face_target = true
 		extra_crouch = 1.0
@@ -456,7 +466,7 @@ func _landing_and_footsteps(dt: float, was_grounded: bool, fall_speed: float) ->
 func _apply_move_input(dt: float) -> void:
 	var cur := Vector3(vel.x, 0.0, vel.z)
 	var in_dir := Vector3(move_input.x, 0.0, move_input.z)
-	var target := in_dir * (MOVE_SPEED * move_dir_speed_scale(in_dir))
+	var target := in_dir * (move_speed * move_dir_speed_scale(in_dir))
 	var rate: float
 	if not grounded:
 		rate = AIR_ACCEL
