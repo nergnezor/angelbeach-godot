@@ -237,6 +237,10 @@ func _drive(p: Player, dt: float) -> void:
 		return
 	var mine: bool = _side_of(ball.position.x) == p.team
 	if not mine:
+		# The ball is on their side. The front player goes to the net to block
+		# the attack; everyone else resets.
+		if p.role_front and _play_block(p):
+			return
 		p.has_face_target = false
 		p.move_toward_ground(_home(p))
 		return
@@ -282,6 +286,64 @@ func _drive(p: Player, dt: float) -> void:
 	if not headless:
 		_arm_stroke(p, contact, tau)
 		_armed[p] = true
+
+# The block, ported from PlayDefense. Returns false when there is nothing to
+# block, so the caller falls back to resetting.
+#
+# This lives in _drive rather than in the pose code on purpose: a block is a
+# JUMP, so it changes the sim, and the moment the headless run and the windowed
+# one disagree about who left the ground the headless numbers stop being evidence
+# about the game.
+const BLOCK_NET_X := 0.55         # right up at the net, on our side
+const BLOCK_AIM_X := 3.0          # stuff it into the middle of their court
+const BLOCK_JUMP_RADIUS := 0.90
+const BLOCK_SETTLE_SPEED := 0.90  # the drive must be dead before takeoff
+
+func _play_block(p: Player) -> bool:
+	# The cue is the opponents' second touch AND a set that actually reaches
+	# strike height near the net. UpdateSpikeIncoming is what the source uses
+	# here; without it the blocker committed on every second touch, abandoned the
+	# back court to a lone defender, and rallies died a crossing after the serve
+	# — 144 CONTACT lines fell to 121.
+	if touches != 2:
+		return false
+	var spike_incoming := false
+	var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, SPIKE_STRIKE_Y)
+	if bt[0]:
+		var strike: Vector3 = bt[1]
+		spike_incoming = absf(strike.x) < 3.0 and absf(strike.z) < COURT_Z
+	var goal_z: float = clampf(ball.position.z, -COURT_Z + 0.6, COURT_Z - 0.6) \
+		if spike_incoming else _home(p).z
+	var goal := Vector3(_sign(p.team) * BLOCK_NET_X, Player.PLAYER_HEIGHT, goal_z)
+	p.face_target = ball.position
+	p.has_face_target = true
+	if not p.grounded:
+		# Airborne: hold still and throw the block up now. Drifting into the net
+		# is a fault, and momentum carries in the air.
+		p.move_input = Vector3.ZERO
+		if not headless:
+			p.hit_type = GestureIK.HIT_BLOCK
+			p.ball_pos = ball.position
+			p.ball_live = true
+			p.aim = Vector3(-_sign(p.team) * BLOCK_AIM_X, 0.0, p.position.z)
+			p.has_aim = true
+			_armed[p] = true
+		return true
+	var horiz := Vector2(goal.x - p.position.x, goal.z - p.position.z).length()
+	if spike_incoming and horiz < BLOCK_JUMP_RADIUS:
+		# Kill the drive FIRST so the block jump is vertical. Blocks load too —
+		# the same full-body gather the attacker uses, which is also what makes
+		# the two jumps land on the same beat.
+		p.move_input = Vector3.ZERO
+		if Vector2(p.vel.x, p.vel.z).length() < BLOCK_SETTLE_SPEED:
+			p.start_loaded_jump()
+	else:
+		# Track along the net in a loaded stance, hands low. Holding the middle
+		# until the attack cue is deliberate: following every set's small lateral
+		# drift was visually busy and gave up the centre for no benefit.
+		p.move_toward_ground(goal, 0.85)
+		p.request_crouch(0.3)
+	return true
 
 # ApproachForSpike, ported from AIPlayer.as. Returns false when there is no jump
 # attack available, so the caller can play the ball off the ground instead.
