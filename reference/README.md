@@ -50,15 +50,21 @@ Two things the original could assume and this rig cannot:
   is against a ~180 cm actor; this rig is 1.45 m with a 0.56 m arm. They are
   scaled by the ratio of the rig's MEASURED arm reach to the original's 1.10 m.
 
-Still to port (line counts at the time of the move):
+Still to port. Only AIPlayer.as has anything left, and the machinery it
+still owns is the difference between four players who each chase the
+nearest ball and two pairs who play as teams:
 
-    Script/AI/AIPlayer.as             1465   state machine, spike approach,
-                                             block, dive, split step
-    Script/Player/VolleyballPlayer.as 1872   contact model, jumps, dive,
-                                             crouch channels, telemetry
-    Script/Match/GameMode.as           566   match rules, scoring, serving
-    Script/World/Court.as              530   court, net, sand deformation
-    Script/World/Environment.as        212   sky, sun, the measured light gains
+    Script/AI/AIPlayer.as   block at the net; the dive (Player.start_dive
+                            exists and nothing calls it); the split step;
+                            ReactionDelay, so decisions land on a tick
+                            rather than every frame; the serve toss
+                            sequence; aim selection weighted by
+                            Difficulty; the deep-ball role rule that
+                            gives the back player serve receive.
+
+Ported and verified: Environment.as, Court.as, GameMode.as, GameState.as,
+VolleyballPlayer.as, PlayerIK.as, MotionPlan.as, Ball.as, and from
+AIPlayer.as the sticky hitter role and ApproachForSpike.
 
 Already ported, and verified numerically identical:
 
