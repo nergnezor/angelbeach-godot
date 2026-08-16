@@ -56,14 +56,27 @@ Only `AIPlayer.as` still has unported machinery, and it is the difference
 between four players who each chase the nearest ball and two pairs who play as
 teams:
 
-- **The dive.** `Player.start_dive` exists and nothing calls it. Two attempts to
-  wire it made the game much worse — 141 CONTACT lines to 78, then to 32 — and
-  the reason is structural rather than a threshold. `MotionPlan.as` tries
-  SEVERAL candidate contact heights and only reaches the dive branch when none
-  is playable, and it dives at the ball's landing rather than at the candidate.
-  `Match.gd` evaluates one candidate, so its `playable` answers "not at this
-  height", which is a different question. Move the candidate search into the
-  planner first and the dive falls out of it.
+- **The dive.** `Player.start_dive` exists and nothing calls it. Four attempts
+  now, all reverted, and the numbers are the record: gating it on a home-made
+  body-time estimate gave 141 CONTACT lines -> 78; gating it on the planner's
+  `playable` gave -> 32; a four-height candidate ladder gave -> 31 (though it
+  did reach zero timeouts, every rally decided by the rules); and the source's
+  own two-height `PlanIntercept` gave -> 50 with ten four-touch faults out of
+  twelve rallies.
+
+  The consistent failure is NOT the dive test. It is the fallback height. Every
+  variant lets a player commit to a waist-high or lower contact when the
+  preferred height is unplayable, and on the THIRD touch such a contact cannot
+  clear the tape — so the ball stays on our side and the rally dies on a
+  four-touch fault instead of crossing.
+
+  `AIPlayer.as` avoids this by never routing the attack through
+  `PlanIntercept` at all: `PlayHitter` dispatches touch three to
+  `ApproachForSpike`, which has its own fallback (`DoSpike` from wherever the
+  ball drops to `ContactHeight()`). Our `_drive` tries the spike approach first
+  but falls through to the generic intercept when it declines, and that is the
+  hole. Read `PlayHitter` and `PlayDefense`'s dispatch before the next attempt,
+  not `PlanIntercept` again.
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
 `GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,

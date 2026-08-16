@@ -341,7 +341,12 @@ impl MotionPlan {
     fn plan(dist: f64, tau: f64, vmax: f64, accel: f64) -> VarDictionary {
         let tn = tuning();
         let body_t = Self::body_travel_time(dist, vmax, accel);
-        let hand_t = Self::hand_time();
+        // HALF the effector travel, and the source is explicit about why: only
+        // "the second half of the effector travel happens after the body has
+        // settled" -- the first half overlaps the run. Charging the full hand
+        // time made this budget stricter than PlanIntercept's, so contacts read
+        // as unplayable that the original would have committed to.
+        let hand_t = Self::hand_time() * 0.5;
         let slack = tau - (body_t + hand_t + tn.margin);
         if slack < 0.0 {
             return dict! {
