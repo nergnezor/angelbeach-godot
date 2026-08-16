@@ -146,8 +146,8 @@
       "terminal": "integrated"
     },
     {
-      // Starts the Godot editor. Also what lights up GDScript completion
-      // in VS Code — the LSP lives inside the running editor.
+      // Starts the Godot editor, for scene work. Not needed for GDScript
+      // completion any more — godotTools.lsp.headless runs its own.
       "name": "Godot editor",
       "type": "lldb",
       "request": "launch",

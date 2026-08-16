@@ -91,8 +91,14 @@ var hud: Label
 var _armed := {}
 
 func _build_presentation() -> void:
-	add_child(Court.new())
+	var court := Court.new()
+	add_child(court)
 	ball.setup_view()
+	# The sand only exists when there is a screen, so the footprints do too —
+	# handing the players a null court in a headless run is what keeps the
+	# deformation out of the acceptance path entirely.
+	for p in players:
+		p.court = court
 
 	var model := load("res://assets/player.glb") as PackedScene
 	for i in players.size():

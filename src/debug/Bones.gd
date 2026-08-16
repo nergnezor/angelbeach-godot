@@ -16,13 +16,32 @@ func _ready() -> void:
 	var skel := _find(model, "Skeleton3D") as Skeleton3D
 	var mi := _find(model, "MeshInstance3D") as MeshInstance3D
 	var mesh := mi.mesh as ArrayMesh
-	print("BONES mesh surfaces=%d skeleton bones=%d" % [mesh.get_surface_count(), skel.get_bone_count()])
+	# Every vertex goes through the full bind transform rather than being read
+	# straight out of the array, because on this rig mesh space is neither
+	# skeleton space nor metres: the glb root scales by 0.300 and the skin's bind
+	# poses scale by 3.33 the other way. They happen to cancel, so the printed
+	# sizes come out equal to the raw vertex numbers — but that is a property of
+	# this asset, not a rule, and reading it off the node alone puts the rig at
+	# 0.64 m against the 1.45 m Diag.tscn measures off the bone chain.
+	var skin := mi.skin
+	var to_world := skel.global_transform
+	# ARRAY_BONES indexes the SKIN's bind list, not the skeleton's bones.
+	var bind_bone := PackedInt32Array()
+	for i in skin.get_bind_count():
+		var b := skin.get_bind_bone(i)
+		if b < 0:
+			b = skel.find_bone(skin.get_bind_name(i))
+		bind_bone.append(b)
+	print("BONES mesh surfaces=%d skeleton bones=%d skin binds=%d"
+		% [mesh.get_surface_count(), skel.get_bone_count(), skin.get_bind_count()])
 
-	# In the bind pose skinning is the identity, so a vertex sits exactly where the
-	# array says and no bone transform needs applying. That is the whole reason to
-	# measure here rather than mid-animation.
+	# Rest pose, so the AABBs describe the model as authored rather than whatever
+	# frame an animation happened to be on.
 	skel.reset_bone_poses()
 	skel.force_update_all_bone_transforms()
+	var xf: Array[Transform3D] = []
+	for i in skin.get_bind_count():
+		xf.append(to_world * skel.get_bone_global_pose(bind_bone[i]) * skin.get_bind_pose(i))
 
 	var mins: Array[Vector3] = []
 	var maxs: Array[Vector3] = []
@@ -39,27 +58,34 @@ func _ready() -> void:
 		var weights: PackedFloat32Array = arr[Mesh.ARRAY_WEIGHTS]
 		var per := bones.size() / verts.size()   # 4 or 8 influences per vertex
 		for i in verts.size():
-			var p := verts[i]
+			# Skin the vertex the way the GPU does, so its position is where the
+			# thing actually sits on the body — in metres, in the world.
+			var p := Vector3.ZERO
 			var best := -1
 			var best_w := -1.0
 			for k in per:
 				var w := weights[i * per + k]
+				if w <= 0.0:
+					continue
+				var idx := bones[i * per + k]
+				p += (xf[idx] * verts[i]) * w
 				if w > best_w:
 					best_w = w
-					best = bones[i * per + k]
+					best = bind_bone[idx]
 			if best < 0:
 				continue
 			mins[best] = Vector3(minf(mins[best].x, p.x), minf(mins[best].y, p.y), minf(mins[best].z, p.z))
 			maxs[best] = Vector3(maxf(maxs[best].x, p.x), maxf(maxs[best].y, p.y), maxf(maxs[best].z, p.z))
 			counts[best] += 1
 
-	print("BONES per-bone vertex AABB (model space, metres) — dominant weight wins:")
+	print("BONES per-bone vertex AABB (metres, dominant weight wins):")
 	for b in skel.get_bone_count():
 		if counts[b] == 0:
 			continue
 		var size := maxs[b] - mins[b]
 		print("   %-16s verts=%-5d size=(w %.3f, h %.3f, d %.3f)  y=%.3f..%.3f"
-			% [skel.get_bone_name(b), counts[b], size.x, size.y, size.z, mins[b].y, maxs[b].y])
+			% [skel.get_bone_name(b), counts[b], size.x, size.y, size.z,
+				mins[b].y, maxs[b].y])
 	_dump_tracks(_find(model, "AnimationPlayer") as AnimationPlayer)
 	get_tree().quit()
 

@@ -217,9 +217,128 @@ func _update_view() -> void:
 		anim.play("idle")
 		anim.speed_scale = 1.0
 
+# --- Jumps, dives and the two crouch channels --------------------------------
+# Ported from VolleyballPlayer.as. The split between the channels is the part
+# worth keeping straight, and the source spells out why: ExtraCrouch is written
+# by FRAME-RATE transients (split step, dive, jump load, landing absorb, air
+# tuck) and decays every frame, so it releases the instant its envelope ends.
+# HeldCrouch is written by the AI's TICK-RATE stance requests and is held across
+# the reaction gap, because clearing it per frame made poses sawtooth between
+# ticks. One lifetime each; a transient peak must not get frozen at the held
+# rate.
+const LOADED_JUMP_VELOCITY := 6.6   # 660 cm/s: ~115 cm of rise
+const JUMP_LOAD_DURATION := 0.16
+const JUMP_LOAD_BRAKE := 0.25       # the gather turns momentum into height
+const DIVE_DURATION := 0.42
+const DIVE_RECOVERY := 0.75
+const DIVE_SPEED_MUL := 1.75
+const DIVE_HOP := 2.0               # the lunge leaves the ground for a beat
+const CROUCH_DECAY := 2.5
+const CROUCH_HOLD := 0.25
+
+# Nobody crosses the net. The source clamps each player to their own half with a
+# 5 cm buffer at the plane, which is the rule that keeps a block on its own side.
+const HALF_MIN_X := 0.05
+const HALF_MAX_X := 9.0
+const HALF_Z := 4.5
+
+var court: Node = null              # set when there is a court to dent
+var jump_load_t := 0.0
+var dive_t := 0.0
+var dive_recover_t := 0.0
+var dive_dir := Vector3.RIGHT
+var held_crouch := 0.0
+var _crouch_hold_t := 0.0
+var _land_absorb_t := 0.0
+var _land_absorb_depth := 0.5
+var _step_timer := 0.0
+
+func is_diving() -> bool:
+	return dive_t > 0.0
+
+func can_dive() -> bool:
+	return grounded and dive_t <= 0.0 and dive_recover_t <= 0.0
+
+func is_jump_loading() -> bool:
+	return jump_load_t > 0.0
+
+func jump() -> void:
+	if grounded:
+		vel.y = JUMP_VELOCITY
+		grounded = false
+
+func start_loaded_jump() -> void:
+	if not grounded or jump_load_t > 0.0:
+		return
+	# The plant brakes the run: momentum becomes height, and the small residue
+	# drifts the body into the contact during the ascent.
+	vel.x *= JUMP_LOAD_BRAKE
+	vel.z *= JUMP_LOAD_BRAKE
+	jump_load_t = JUMP_LOAD_DURATION
+
+func start_dive(world_dir: Vector3) -> void:
+	var flat := Vector3(world_dir.x, 0.0, world_dir.z)
+	if flat.length_squared() < 0.01:
+		return
+	dive_dir = flat.normalized()
+	dive_t = DIVE_DURATION
+	vel.y = DIVE_HOP
+	grounded = false
+
+# Held across the AI's reaction gap, unlike extra_crouch.
+func request_crouch(amount: float) -> void:
+	held_crouch = maxf(held_crouch, amount)
+	_crouch_hold_t = CROUCH_HOLD
+
+func crouch_amount() -> float:
+	return clampf(maxf(extra_crouch, held_crouch), 0.0, 1.0)
+
+func _update_dive(dt: float) -> void:
+	if dive_t > 0.0:
+		dive_t -= dt
+		# The dive owns the velocity and the facing while it is active.
+		vel.x = dive_dir.x * MOVE_SPEED * DIVE_SPEED_MUL
+		vel.z = dive_dir.z * MOVE_SPEED * DIVE_SPEED_MUL
+		face_target = position + dive_dir
+		has_face_target = true
+		extra_crouch = 1.0
+		if dive_t <= 0.0:
+			dive_recover_t = DIVE_RECOVERY
+	elif dive_recover_t > 0.0:
+		dive_recover_t -= dt
+		# Getting up: still low, easing back to standing.
+		extra_crouch = maxf(extra_crouch, 0.85 * (dive_recover_t / DIVE_RECOVERY))
+
+func _update_jump_load(dt: float) -> void:
+	if jump_load_t <= 0.0:
+		return
+	if not grounded:
+		jump_load_t = 0.0        # knocked airborne: cancel
+		return
+	# Sink through the load, deepest right before the explosion.
+	extra_crouch = maxf(extra_crouch, 0.65 * (1.0 - jump_load_t / JUMP_LOAD_DURATION))
+	jump_load_t -= dt
+	if jump_load_t <= 0.0:
+		vel.y = LOADED_JUMP_VELOCITY
+		grounded = false
+
 func step(dt: float) -> void:
-	_apply_move_input(dt)
-	vel.y += GRAVITY * dt
+	# Both crouch channels decay first, so anything that re-asserts this frame
+	# writes over a falling value rather than a stale peak.
+	extra_crouch = maxf(0.0, extra_crouch - CROUCH_DECAY * dt)
+	_crouch_hold_t -= dt
+	if _crouch_hold_t <= 0.0:
+		held_crouch = maxf(0.0, held_crouch - CROUCH_DECAY * dt)
+
+	_update_dive(dt)
+	_update_jump_load(dt)
+	if not is_diving():
+		_apply_move_input(dt)
+
+	if not grounded:
+		vel.y += GRAVITY * dt
+	var was_grounded := grounded
+	var fall_speed := -vel.y
 	position += vel * dt
 	if position.y <= floor_y + PLAYER_HEIGHT:
 		position.y = floor_y + PLAYER_HEIGHT
@@ -227,8 +346,47 @@ func step(dt: float) -> void:
 		grounded = true
 	else:
 		grounded = false
+
+	# Own half only, and never through the net plane.
+	var s := -1.0 if team == 0 else 1.0
+	position.x = clampf(position.x, minf(s * HALF_MIN_X, s * HALF_MAX_X),
+		maxf(s * HALF_MIN_X, s * HALF_MAX_X))
+	position.z = clampf(position.z, -HALF_Z, HALF_Z)
+
+	_landing_and_footsteps(dt, was_grounded, fall_speed)
 	_update_facing(dt)
 	sample_motion(dt)
+
+# Sand FX and landing absorption: knees flex on touchdown, deeper after a bigger
+# fall — a stiff-legged landing is both unphysical and unreadable.
+func _landing_and_footsteps(dt: float, was_grounded: bool, fall_speed: float) -> void:
+	var feet := Vector3(position.x, floor_y, position.z)
+	if grounded and not was_grounded and fall_speed > 1.2:
+		var strength := clampf(fall_speed / 6.0, 0.3, 1.6)
+		if court != null:
+			court.deform_sand(feet, 0.24, 0.04 + strength * 0.06)
+		_land_absorb_t = 0.3
+		_land_absorb_depth = clampf(fall_speed / 9.0, 0.3, 0.7)
+	if _land_absorb_t > 0.0:
+		_land_absorb_t -= dt
+		extra_crouch = maxf(extra_crouch, _land_absorb_depth * (_land_absorb_t / 0.3))
+
+	# Airborne attack tuck: knees come up through the ascent of a spike or block
+	# jump and release on the way down — the legs trail dead otherwise.
+	if not grounded and vel.y > -1.0 \
+			and (hit_type == GestureIK.HIT_SPIKE or hit_type == GestureIK.HIT_BLOCK):
+		extra_crouch = maxf(extra_crouch, 0.35)
+
+	if grounded:
+		var hspeed := Vector2(vel.x, vel.z).length()
+		if hspeed > 0.8:
+			_step_timer += dt
+			if _step_timer >= clampf(1.2 / hspeed, 0.18, 0.5):
+				_step_timer = 0.0
+				if court != null:
+					court.deform_sand(feet, 0.16, 0.03)
+		else:
+			_step_timer = 0.0
 
 func _apply_move_input(dt: float) -> void:
 	var cur := Vector3(vel.x, 0.0, vel.z)
