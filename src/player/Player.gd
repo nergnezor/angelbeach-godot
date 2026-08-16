@@ -273,6 +273,28 @@ var _step_timer := 0.0
 # reach, because letting the rise phase overlap the dig produced a fast up-down
 # bob right at the meet: a real player with no time to gather simply skips the
 # hop.
+# --- Reaction: the AI does not think every frame ------------------------------
+# Two timers, and the source keeps them separate on purpose. PERCEPTION_LATENCY
+# is human visual reaction to an unanticipated EVENT — it fires once, when the
+# ball's state changes under us. reaction_delay is the decision CADENCE: how
+# often the AI re-decides at all. Difficulty picks it, lerp(0.35, 0.04), so a
+# weaker player is not worse at running, they are later to know.
+#
+# The split step is deliberately NOT gated by either: the read has to land on the
+# opponent's strike, and a dip that arrives a tick late is not a read.
+const PERCEPTION_LATENCY := 0.16
+
+var reaction_delay := 0.1175      # lerp(0.35, 0.04, difficulty 0.75)
+var reaction_t := 0.0
+var perception_t := 0.0
+var percept_stamp := -12345
+# The last decision, held between ticks. Movement continues toward it every
+# frame — a player who has decided keeps running while they think about the next
+# thing.
+var plan_goal := Vector3.ZERO
+var plan_speed := 1.0
+var has_plan := false
+
 const SPLIT_STEP_DURATION := 0.26
 const SPLIT_STEP_MOVE_SCALE := 0.12   # feet are planted; only a shuffle
 

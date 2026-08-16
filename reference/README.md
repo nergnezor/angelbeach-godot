@@ -54,10 +54,19 @@ Still to port. Only AIPlayer.as has anything left, and the machinery it
 still owns is the difference between four players who each chase the
 nearest ball and two pairs who play as teams:
 
-    Script/AI/AIPlayer.as   block at the net; the dive (Player.start_dive
-                            exists and nothing calls it); the split step;
-                            ReactionDelay, so decisions land on a tick
-                            rather than every frame; the serve toss
+    Script/AI/AIPlayer.as   the dive. Player.start_dive exists and
+                            nothing calls it, and two attempts to wire
+                            it made the game much worse (141 CONTACT
+                            lines -> 78, then -> 32). The reason is
+                            structural: MotionPlan.as tries SEVERAL
+                            candidate contact heights and only reaches
+                            the dive branch when none is playable, and
+                            it dives at the ball's landing rather than
+                            at the candidate. Match.gd evaluates one
+                            candidate, so its `playable` means "not at
+                            this height", which is a different question.
+                            Move the candidate search into the planner
+                            first and the dive falls out of it; the serve toss
                             sequence; aim selection weighted by
                             Difficulty; the deep-ball role rule that
                             gives the back player serve receive.

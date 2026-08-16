@@ -231,9 +231,27 @@ func _drive(p: Player, dt: float) -> void:
 	if p.human:
 		_human_drive(p)
 		return
+	# The AI thinks on a cadence, not every frame. Between ticks it keeps moving
+	# toward the last decision rather than standing still — a player who has
+	# committed keeps running while they think about the next thing.
+	var stamp := touches * 4 + last_touch_team + (8 if ball.in_play else 0)
+	if stamp != p.percept_stamp:
+		# The ball's state changed under us: that is an event, and events cost a
+		# beat of visual reaction before any new decision is possible.
+		p.percept_stamp = stamp
+		p.perception_t = Player.PERCEPTION_LATENCY
+	if p.perception_t > 0.0:
+		p.perception_t -= dt
+		_hold_plan(p)
+		return
+	p.reaction_t += dt
+	if p.reaction_t < p.reaction_delay:
+		_hold_plan(p)
+		return
+	p.reaction_t = 0.0
 	if not ball.in_play:
 		p.has_face_target = false
-		p.move_toward_ground(_home(p))
+		_go(p, _home(p))
 		return
 	var mine: bool = _side_of(ball.position.x) == p.team
 	if not mine:
@@ -242,14 +260,14 @@ func _drive(p: Player, dt: float) -> void:
 		if p.role_front and _play_block(p):
 			return
 		p.has_face_target = false
-		p.move_toward_ground(_home(p))
+		_go(p, _home(p))
 		return
 	# Where does the ball next cross contact height, and can I be there?
 	var target_y: float = SET_Y if touches == 1 else BUMP_Y
 	var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, target_y)
 	if not bt[0]:
 		p.has_face_target = false
-		p.move_toward_ground(_home(p))
+		_go(p, _home(p))
 		return
 	var contact: Vector3 = bt[1]
 	var tau: float = bt[2]
@@ -257,7 +275,7 @@ func _drive(p: Player, dt: float) -> void:
 	# steps aside. This is what stops double contacts and fourth-touch faults.
 	if p == last_toucher:
 		p.has_face_target = false
-		p.move_toward_ground(_home(p))
+		_go(p, _home(p))
 		return
 	var mate := _teammate(p)
 	if mate != null and mate != last_toucher:
@@ -269,7 +287,7 @@ func _drive(p: Player, dt: float) -> void:
 		p.is_chasing = my_d <= their_d + margin
 		if not p.is_chasing:
 			p.has_face_target = false
-			p.move_toward_ground(_home(p))
+			_go(p, _home(p))
 			return
 	# The third touch is an attack, and an attack is a jump. Only if the set
 	# actually reaches strike height — otherwise fall through and play it over
@@ -280,12 +298,26 @@ func _drive(p: Player, dt: float) -> void:
 	var eff_vmax := Player.MOVE_SPEED * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
 	p.is_reaching = true
-	p.move_toward_ground(contact, plan["speed_fraction"])
+	_go(p, contact, plan["speed_fraction"])
 	p.face_target = contact
 	p.has_face_target = true
 	if not headless:
 		_arm_stroke(p, contact, tau)
 		_armed[p] = true
+
+# Every AI move goes through here so the goal is remembered as well as acted on.
+func _go(p: Player, goal: Vector3, speed: float = 1.0) -> void:
+	p.plan_goal = goal
+	p.plan_speed = speed
+	p.has_plan = true
+	p.move_toward_ground(goal, speed)
+
+# Between decisions: keep executing the last one.
+func _hold_plan(p: Player) -> void:
+	if p.has_plan:
+		p.move_toward_ground(p.plan_goal, p.plan_speed)
+	else:
+		p.move_input = Vector3.ZERO
 
 # The block, ported from PlayDefense. Returns false when there is nothing to
 # block, so the caller falls back to resetting.
@@ -341,7 +373,7 @@ func _play_block(p: Player) -> bool:
 		# Track along the net in a loaded stance, hands low. Holding the middle
 		# until the attack cue is deliberate: following every set's small lateral
 		# drift was visually busy and gave up the centre for no benefit.
-		p.move_toward_ground(goal, 0.85)
+		_go(p, goal, 0.85)
 		p.request_crouch(0.3)
 	return true
 
@@ -384,14 +416,14 @@ func _approach_for_spike(p: Player) -> bool:
 		# convert into height.
 		var start := Vector3(plant.x + _sign(p.team) * APPROACH_BACK,
 			Player.PLAYER_HEIGHT, plant.z)
-		p.move_toward_ground(start, 0.8)
+		_go(p, start, 0.8)
 		p.request_crouch(0.25)
 		return true
 
 	# GO. Sprint only outside the jump radius: driving at full speed through the
 	# plant made the hitter overshoot and shuttle back and forth over it while
 	# waiting for the jump window.
-	p.move_toward_ground(plant, 1.0 if dist > JUMP_RADIUS else 0.35)
+	_go(p, plant, 1.0 if dist > JUMP_RADIUS else 0.35)
 	# Leave the ground one apex-time before the ball arrives, and the gather
 	# happens BEFORE takeoff so the decision fires one load earlier. The margin
 	# is deliberately tiny and late-biased: an early jump tops out while the ball
