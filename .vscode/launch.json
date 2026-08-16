@@ -1,33 +1,54 @@
 {
-  // type: "lldb" is CodeLLDB (vadimcn.vscode-lldb), which launches a native
-  // binary directly. Do NOT use type: "node" here — js-debug expects a Node
-  // program, and handed a Godot binary it fails without a useful message.
-  // As a side benefit this is a real native debugger, so breakpoints in
-  // rust/src/lib.rs work while the game runs.
+  // Two debuggers, two jobs. type: "godot" is Godot Tools and debugs the
+  // GDScript — breakpoints in .gd, live scene tree, remote inspector.
+  // type: "lldb" is CodeLLDB and debugs the native side — breakpoints in
+  // rust/src/lib.rs. They are complements, not alternatives.
+  //
+  // Do NOT use type: "node" here. js-debug expects a Node program, and
+  // handed a Godot binary it fails without a useful message.
   "version": "0.2.0",
   "configurations": [
     {
-      // Godot Tools' own debugger. THIS is the one that gives GDScript
-      // breakpoints, a live scene tree and the remote inspector — lldb debugs
-      // the .so, not the scripts, so the two are complements rather than
-      // alternatives. It also runs the game through the editor's debug
-      // protocol, which is the only way a running game reloads anything.
+      // The F5 default, kept deliberately free of moving parts: no
+      // preLaunchTask that could abort the launch before the adapter
+      // starts, and no ${config:...} variable that could fail to resolve.
+      // "main" is project.godot's run/main_scene, which is Match.tscn —
+      // same scene as a literal path, but a value the launch.json schema
+      // accepts, so the file stays free of problem markers.
       "name": "GDScript: play the match",
       "type": "godot",
       "request": "launch",
       "project": "${workspaceFolder}",
-      "scene": "res://src/match/Match.tscn",
-      "additional_options": "",
+      "scene": "main"
+    },
+    {
+      // Same, but rebuilds the Rust core first. Use this one after
+      // touching rust/src/lib.rs; use the plain one if a launch ever
+      // silently fails, to rule the build out.
+      "name": "GDScript: play the match (rebuild first)",
+      "type": "godot",
+      "request": "launch",
+      "project": "${workspaceFolder}",
+      "scene": "main",
       "preLaunchTask": "cargo build"
     },
     {
+      // Runs whatever scene is open in the editor. Handy for Pose.tscn.
+      // With a .gd focused it launches the .tscn of the same name.
       "name": "GDScript: play the open scene",
       "type": "godot",
       "request": "launch",
       "project": "${workspaceFolder}",
-      "scene": "current",
-      "additional_options": "",
-      "preLaunchTask": "cargo build"
+      "scene": "current"
+    },
+    {
+      // The acceptance run, but with GDScript breakpoints attached.
+      "name": "GDScript: headless match",
+      "type": "godot",
+      "request": "launch",
+      "project": "${workspaceFolder}",
+      "scene": "main",
+      "additional_options": "--headless"
     },
     {
       // Attach to a game already started from the Godot editor.
@@ -38,7 +59,7 @@
       "port": 6007
     },
     {
-      "name": "Play (windowed)",
+      "name": "Rust: play (windowed)",
       "type": "lldb",
       "request": "launch",
       "program": "${config:godotTools.editorPath.godot4}",
@@ -49,7 +70,7 @@
       "preLaunchTask": "cargo build"
     },
     {
-      "name": "Headless match (the acceptance run)",
+      "name": "Rust: headless match (the acceptance run)",
       "type": "lldb",
       "request": "launch",
       "program": "${config:godotTools.editorPath.godot4}",
@@ -65,7 +86,7 @@
       "preLaunchTask": "cargo build"
     },
     {
-      "name": "Screenshot (writes a PNG, then quits)",
+      "name": "Rust: screenshot (writes a PNG, then quits)",
       "type": "lldb",
       "request": "launch",
       "program": "${config:godotTools.editorPath.godot4}",
@@ -81,7 +102,7 @@
       "preLaunchTask": "cargo build"
     },
     {
-      "name": "Spike 1 — movement budget PORTCHECK",
+      "name": "Rust: Spike 1 — movement budget PORTCHECK",
       "type": "lldb",
       "request": "launch",
       "program": "${config:godotTools.editorPath.godot4}",
@@ -97,7 +118,7 @@
       "preLaunchTask": "cargo build"
     },
     {
-      "name": "Spike 3 — foot lock vs skate",
+      "name": "Rust: Spike 3 — foot lock vs skate",
       "type": "lldb",
       "request": "launch",
       "program": "${config:godotTools.editorPath.godot4}",
@@ -111,7 +132,7 @@
       "terminal": "integrated"
     },
     {
-      "name": "Diag — rig scale and contact profile",
+      "name": "Rust: Diag — rig scale and contact profile",
       "type": "lldb",
       "request": "launch",
       "program": "${config:godotTools.editorPath.godot4}",
@@ -125,7 +146,9 @@
       "terminal": "integrated"
     },
     {
-      "name": "Editor",
+      // Starts the Godot editor. Also what lights up GDScript completion
+      // in VS Code — the LSP lives inside the running editor.
+      "name": "Godot editor",
       "type": "lldb",
       "request": "launch",
       "program": "${config:godotTools.editorPath.godot4}",
