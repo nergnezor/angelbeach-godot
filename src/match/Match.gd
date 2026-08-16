@@ -311,7 +311,11 @@ func _drive(p: Player, dt: float) -> void:
 	# The third touch is an attack, and an attack is a jump. Only if the set
 	# actually reaches strike height — otherwise fall through and play it over
 	# from the ground.
-	if touches == 2 and p.grounded and _approach_for_spike(p):
+	if touches == 2:
+		# PlayHitter: touch three is an attack, full stop. It never falls through
+		# to the generic intercept, because that path's fallback height cannot
+		# clear the net.
+		_approach_for_spike(p)
 		return
 	var flat := Vector3(contact.x - p.position.x, 0.0, contact.z - p.position.z)
 	var eff_vmax := p.move_speed * p.move_dir_speed_scale(flat)
@@ -407,6 +411,22 @@ func _play_block(p: Player) -> bool:
 		p.request_crouch(0.3)
 	return true
 
+# DoSpike from the ground: no jump available, so stand under the ball where it
+# drops to a height an attack can still be struck from, and play it over.
+func _ground_attack(p: Player) -> bool:
+	for h: float in [SET_Y, BUMP_Y]:
+		var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, h)
+		if not bt[0]:
+			continue
+		var c: Vector3 = bt[1]
+		_go(p, Vector3(clampf(c.x, -COURT_X, COURT_X), Player.PLAYER_HEIGHT,
+			clampf(c.z, -COURT_Z, COURT_Z)))
+		p.face_target = ball.position
+		p.has_face_target = true
+		return true
+	_go(p, _home(p))
+	return true
+
 # ApproachForSpike, ported from AIPlayer.as. Returns false when there is no jump
 # attack available, so the caller can play the ball off the ground instead.
 #
@@ -422,13 +442,28 @@ const JUMP_RADIUS := 0.90
 const JUMP_EPS := 0.05
 
 func _approach_for_spike(p: Player) -> bool:
+	if not p.grounded:
+		# Airborne: hold still and let the arms do the work. Drive in the air is
+		# drift, and drift at the net is a fault.
+		p.move_input = Vector3.ZERO
+		p.face_target = ball.position
+		p.has_face_target = true
+		return true
 	var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, SPIKE_STRIKE_Y)
-	if not bt[0]:
-		return false
-	var strike: Vector3 = bt[1]
-	var tau: float = bt[2]
-	if absf(strike.x) > COURT_X or absf(strike.z) > COURT_Z:
-		return false
+	var strike: Vector3 = bt[1] if bt[0] else Vector3.ZERO
+	var tau: float = bt[2] if bt[0] else -1.0
+	if not bt[0] or absf(strike.x) > COURT_X or absf(strike.z) > COURT_Z:
+		# The set never gets to strike height, so there is no jump attack. Get
+		# under where it DOES drop to a playable height and hit it over from the
+		# ground instead.
+		#
+		# This branch is why the attack must not share the generic intercept:
+		# PlanIntercept's fallback is waist height, and a third touch played from
+		# the waist cannot clear the tape — the ball stays on our side and the
+		# rally dies on a four-touch fault. AIPlayer.as never routes an attack
+		# through it either. PlayHitter sends touch three straight here, and this
+		# is ApproachForSpike's own fallback.
+		return _ground_attack(p)
 	var time_to_apex: float = Player.LOADED_JUMP_VELOCITY / 19.0
 	var plant := Vector3(strike.x + _sign(p.team) * PLANT_OFFSET,
 		Player.PLAYER_HEIGHT, strike.z)

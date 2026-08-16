@@ -56,27 +56,24 @@ Only `AIPlayer.as` still has unported machinery, and it is the difference
 between four players who each chase the nearest ball and two pairs who play as
 teams:
 
-- **The dive.** `Player.start_dive` exists and nothing calls it. Four attempts
-  now, all reverted, and the numbers are the record: gating it on a home-made
-  body-time estimate gave 141 CONTACT lines -> 78; gating it on the planner's
-  `playable` gave -> 32; a four-height candidate ladder gave -> 31 (though it
-  did reach zero timeouts, every rally decided by the rules); and the source's
-  own two-height `PlanIntercept` gave -> 50 with ten four-touch faults out of
-  twelve rallies.
+- **The dive.** `Player.start_dive` exists and nothing calls it. Five attempts,
+  all reverted, and the numbers are the record: a home-made body-time estimate
+  gave 141 CONTACT lines -> 78; the planner's `playable` -> 32; a four-height
+  candidate ladder -> 31; the source's own two-height `PlanIntercept` -> 50;
+  and the same search after the attack was given its own fallback -> 54, still
+  with ten four-touch faults in twelve rallies.
 
-  The consistent failure is NOT the dive test. It is the fallback height. Every
-  variant lets a player commit to a waist-high or lower contact when the
-  preferred height is unplayable, and on the THIRD touch such a contact cannot
-  clear the tape — so the ball stays on our side and the rally dies on a
-  four-touch fault instead of crossing.
+  What the fifth attempt settled is where the fault is NOT. The attack path is
+  now correct and separate (see `_ground_attack`), and the four-touch faults
+  survived that fix unchanged — so they come from the DIG path's waist
+  fallback, not from the attack. A digger that commits low and late leaves the
+  ball for its partner, and the count climbs.
 
-  `AIPlayer.as` avoids this by never routing the attack through
-  `PlanIntercept` at all: `PlayHitter` dispatches touch three to
-  `ApproachForSpike`, which has its own fallback (`DoSpike` from wherever the
-  ball drops to `ContactHeight()`). Our `_drive` tries the spike approach first
-  but falls through to the generic intercept when it declines, and that is the
-  hole. Read `PlayHitter` and `PlayDefense`'s dispatch before the next attempt,
-  not `PlanIntercept` again.
+  The unexamined piece is `PlanIntercept`'s `bStage`: the source does NOT chase
+  the current read while slack exceeds the prediction drift, it HOLDS the
+  expectation point, and the comment says the stage->go transition happens
+  exactly once and cannot flicker. Our `_drive` has no staging at all, so it
+  re-chases every tick. Read `bStage` and `MB_PredErrRate` before attempt six.
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
 `GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,
@@ -137,8 +134,8 @@ that would actually gain wall-clock but is also the most grown-together with
     godot --headless --path . res://src/match/Match.tscn
 
 Seeded, so it reproduces exactly. Compare stdout against the previous build.
-As of the serve-toss port: 138 CONTACT lines, 9 RALLY lines, 36 MOTIONSTATS
-lines. The MotionPlan/Contact move was verified
+As of the ground-attack fallback: 147 CONTACT lines (56 of them spikes), 8
+RALLY lines, 32 MOTIONSTATS lines. The MotionPlan/Contact move was verified
 byte-identical this way, as was BallSim, and so were both presentation ports.
 
 The number moves whenever the RULES move, and that is the point — it moved
