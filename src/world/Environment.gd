@@ -73,6 +73,13 @@ const T_ZENITH_RAMP := 0.208
 @export var sun_energy := 1.6
 @export var sun_color := Color(1.0, 0.98, 0.92)   # neutral noon sun, not sunset
 @export var ambient_energy := 1.2
+# The exposure cut, and it is load-bearing rather than taste. The original ran
+# -1.5 EV because the sun-lit sand was clipping, and it is the reason Court.as
+# lifts the post albedo separately: the posts sat at half light and take the cut
+# at face value, where the sand only loses its blow-out. Verified the same way
+# here — with this at 0 the sand renders a flat near-white sheet and the court
+# lines vanish into it, which is the "snowfield" build Court.as describes.
+@export var exposure_ev := -1.5
 @export var fog_enabled := true
 
 # Fog: thin far-field haze only. The original is emphatic that this is NOT a
@@ -174,6 +181,7 @@ void sky() {
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = ambient_energy
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = pow(2.0, exposure_ev)
 
 	if fog_enabled:
 		env.fog_enabled = true
