@@ -56,9 +56,6 @@ Still to port (line counts at the time of the move):
                                              block, dive, split step
     Script/Player/VolleyballPlayer.as 1872   contact model, jumps, dive,
                                              crouch channels, telemetry
-    Script/Player/PlayerIK.as          560   gesture engine: bump, set, spike,
-                                             block, serve; MinJerk/EaseIn/
-                                             EaseOut time profiles; ArcAround
     Script/Match/GameMode.as           566   match rules, scoring, serving
     Script/World/Court.as              530   court, net, sand deformation
     Script/World/Environment.as        212   sky, sun, the measured light gains
@@ -68,6 +65,8 @@ Already ported, and verified numerically identical:
     Script/AI/MotionPlan.as       -> rust/src/lib.rs  (MotionPlan)
     Script/World/Ball.as          -> rust/src/lib.rs  (BallSim, Contact)
                                      + src/world/Ball.gd (the node)
+    Script/Player/PlayerIK.as     -> rust/src/lib.rs  (GestureSolver)
+                                     + src/player/GestureIK.gd, TwoBoneIK.gd
     locomotion + facing           -> src/player/Player.gd
 
 ## What is in Rust, and why that line

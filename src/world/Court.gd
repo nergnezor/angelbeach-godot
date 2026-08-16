@@ -68,27 +68,8 @@ func _build_net() -> void:
 			Vector3(0.0, (NET_TOP + 0.15) * 0.5, z), post)
 
 func _build_sky() -> void:
-	var sun := DirectionalLight3D.new()
-	# High and slightly behind the camera side: long enough shadows to read the
-	# players' feet against the sand, not so long they stripe the court.
-	sun.rotation_degrees = Vector3(-52.0, 38.0, 0.0)
-	sun.light_energy = 1.35
-	sun.shadow_enabled = true
-	add_child(sun)
-
-	var env := Environment.new()
-	var sky := Sky.new()
-	var psm := ProceduralSkyMaterial.new()
-	psm.sky_top_color = Color(0.28, 0.52, 0.85)
-	psm.sky_horizon_color = Color(0.72, 0.82, 0.92)
-	psm.ground_bottom_color = Color(0.78, 0.68, 0.48)
-	psm.ground_horizon_color = Color(0.80, 0.74, 0.58)
-	sky.sky_material = psm
-	env.background_mode = Environment.BG_SKY
-	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	var we := WorldEnvironment.new()
-	we.environment = env
-	add_child(we)
+	# Sun, sky and haze all live in CourtEnvironment now — it is the port of
+	# Script/World/Environment.as, and the placeholder blue sky that used to sit
+	# here was never the game's art direction, just something to see the court
+	# against.
+	add_child(CourtEnvironment.new())
