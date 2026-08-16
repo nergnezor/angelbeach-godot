@@ -85,7 +85,15 @@ func _ready() -> void:
 # stay byte-identical to the seeded baseline, so nothing here may touch the
 # rules, the RNG or the step order.
 
-const HUMAN_INDEX := 0            # team 0's front player is yours
+const HUMAN_TEAM := 0             # both of team 0's players are yours
+
+# You drive your WHOLE side at once — both players read the same stick — until
+# you press jump. That press is the commit: whoever is nearest the ball takes
+# off and keeps the stick for the rest of the rally, and your partner hands
+# themselves back to the AI. Steering the pair is the positioning phase; the
+# jump is the decision, and it is the only thing that picks a body for you.
+# null means nobody has committed yet, so the pair still moves together.
+var human_locked: Player = null
 
 var camera: Camera3D
 var hud: Label

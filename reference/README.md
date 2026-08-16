@@ -56,24 +56,34 @@ Only `AIPlayer.as` still has unported machinery, and it is the difference
 between four players who each chase the nearest ball and two pairs who play as
 teams:
 
-- **The dive.** `Player.start_dive` exists and nothing calls it. Five attempts,
-  all reverted, and the numbers are the record: a home-made body-time estimate
-  gave 141 CONTACT lines -> 78; the planner's `playable` -> 32; a four-height
-  candidate ladder -> 31; the source's own two-height `PlanIntercept` -> 50;
-  and the same search after the attack was given its own fallback -> 54, still
-  with ten four-touch faults in twelve rallies.
+- **The dive.** `Player.start_dive` exists and nothing calls it. Six attempts,
+  all reverted. The sixth finally isolated the cause, and it is not the dive.
 
-  What the fifth attempt settled is where the fault is NOT. The attack path is
-  now correct and separate (see `_ground_attack`), and the four-touch faults
-  survived that fix unchanged — so they come from the DIG path's waist
-  fallback, not from the attack. A digger that commits low and late leaves the
-  ball for its partner, and the count climbs.
+  Running the candidate search with the dive DISABLED gives **5 CONTACT lines**
+  across twelve rallies, against 147 for the shipped code. Every earlier
+  attempt's damage was the search; the dive was partially compensating for it
+  (46 contacts with, 5 without).
 
-  The unexamined piece is `PlanIntercept`'s `bStage`: the source does NOT chase
-  the current read while slack exceeds the prediction drift, it HOLDS the
-  expectation point, and the comment says the stage->go transition happens
-  exactly once and cannot flicker. Our `_drive` has no staging at all, so it
-  re-chases every tick. Read `bStage` and `MB_PredErrRate` before attempt six.
+  The reason is a calibration difference, not a structural one. The shipped
+  `_drive` commits to the predicted contact whenever the ball crosses that
+  height AT ALL, and lets the budget decide only how FAST to run. The search
+  version refuses to chase unless `plan()["playable"]` is true first. Our
+  budget says "not playable" far more often than the Angelscript one did — our
+  accel, settle and margin constants are not the same numbers against the same
+  distances — so gating the attempt on it starves the players and they walk
+  home instead of digging.
+
+  So the prerequisite is not more porting. It is calibrating `playable` against
+  the original: instrument what fraction of decisions it rejects here versus
+  what `PlanIntercept` rejected there, and reconcile MB_Margin, MB_SettleTime
+  and GroundAccel until they agree. Until then, "always chase, budget sets
+  speed" is the behaviour that works, and the dive has no correct gate.
+
+  Also tried and reverted in attempt six: `bStage` staging with `MoveToHold`
+  hysteresis (110 cm out, 35 cm in) and the contact standoff (10 cm on a set,
+  35 on a dig). Faithful to the source, and it cost 147 -> 140 contacts on its
+  own. Worth revisiting only after `playable` is calibrated, since staging's
+  whole job is to stop the re-chasing that the search introduced.
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
 `GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,
