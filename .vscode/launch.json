@@ -7,10 +7,41 @@
   "version": "0.2.0",
   "configurations": [
     {
+      // Godot Tools' own debugger. THIS is the one that gives GDScript
+      // breakpoints, a live scene tree and the remote inspector — lldb debugs
+      // the .so, not the scripts, so the two are complements rather than
+      // alternatives. It also runs the game through the editor's debug
+      // protocol, which is the only way a running game reloads anything.
+      "name": "GDScript: play the match",
+      "type": "godot",
+      "request": "launch",
+      "project": "${workspaceFolder}",
+      "scene": "res://src/match/Match.tscn",
+      "additional_options": "",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      "name": "GDScript: play the open scene",
+      "type": "godot",
+      "request": "launch",
+      "project": "${workspaceFolder}",
+      "scene": "current",
+      "additional_options": "",
+      "preLaunchTask": "cargo build"
+    },
+    {
+      // Attach to a game already started from the Godot editor.
+      "name": "GDScript: attach to a running game",
+      "type": "godot",
+      "request": "attach",
+      "address": "127.0.0.1",
+      "port": 6007
+    },
+    {
       "name": "Play (windowed)",
       "type": "lldb",
       "request": "launch",
-      "program": "${config:angelbeach.godot}",
+      "program": "${config:godotTools.editorPath.godot4}",
       "args": ["--path", "${workspaceFolder}", "res://src/match/Match.tscn"],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",
@@ -21,7 +52,7 @@
       "name": "Headless match (the acceptance run)",
       "type": "lldb",
       "request": "launch",
-      "program": "${config:angelbeach.godot}",
+      "program": "${config:godotTools.editorPath.godot4}",
       "args": [
         "--headless",
         "--path",
@@ -37,7 +68,7 @@
       "name": "Screenshot (writes a PNG, then quits)",
       "type": "lldb",
       "request": "launch",
-      "program": "${config:angelbeach.godot}",
+      "program": "${config:godotTools.editorPath.godot4}",
       "args": [
         "--path",
         "${workspaceFolder}",
@@ -53,7 +84,7 @@
       "name": "Spike 1 — movement budget PORTCHECK",
       "type": "lldb",
       "request": "launch",
-      "program": "${config:angelbeach.godot}",
+      "program": "${config:godotTools.editorPath.godot4}",
       "args": [
         "--headless",
         "--path",
@@ -69,7 +100,7 @@
       "name": "Spike 3 — foot lock vs skate",
       "type": "lldb",
       "request": "launch",
-      "program": "${config:angelbeach.godot}",
+      "program": "${config:godotTools.editorPath.godot4}",
       "args": [
         "--headless",
         "--path",
@@ -83,7 +114,7 @@
       "name": "Diag — rig scale and contact profile",
       "type": "lldb",
       "request": "launch",
-      "program": "${config:angelbeach.godot}",
+      "program": "${config:godotTools.editorPath.godot4}",
       "args": [
         "--headless",
         "--path",
@@ -97,7 +128,7 @@
       "name": "Editor",
       "type": "lldb",
       "request": "launch",
-      "program": "${config:angelbeach.godot}",
+      "program": "${config:godotTools.editorPath.godot4}",
       "args": ["--editor", "--path", "${workspaceFolder}"],
       "cwd": "${workspaceFolder}",
       "terminal": "integrated",

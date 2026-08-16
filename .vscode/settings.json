@@ -1,7 +1,13 @@
 {
-  // Every launch config and task reads the engine path from here, so moving to
-  // a new Godot build is a one-line change.
-  "angelbeach.godot": "/home/erik/godot4/Godot_v4.7.1-stable_linux.x86_64",
+  // Godot Tools' own setting, and the single source of truth for the engine
+  // path: the launch configs and tasks below read it back with
+  // ${config:godotTools.editorPath.godot4}. It used to be a private
+  // "angelbeach.godot" key, which meant two places to change and a variable
+  // VS Code only resolves for settings some extension actually contributes.
+  "godotTools.editorPath.godot4": "/home/erik/godot4/Godot_v4.7.1-stable_linux.x86_64",
+  // The LSP lives in the running editor. Start the Editor launch config and
+  // GDScript completion, go-to-definition and errors light up in VS Code.
+  "godotTools.lsp.serverPort": 6005,
 
   "rust-analyzer.linkedProjects": ["${workspaceFolder}/rust/Cargo.toml"],
   "files.associations": {

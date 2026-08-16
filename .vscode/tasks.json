@@ -22,7 +22,7 @@
       // problem is the debug setup, not the game.
       "label": "play (windowed, no debugger)",
       "type": "shell",
-      "command": "${config:angelbeach.godot} --path ${workspaceFolder} res://src/match/Match.tscn",
+      "command": "${config:godotTools.editorPath.godot4} --path ${workspaceFolder} res://src/match/Match.tscn",
       "dependsOn": "cargo build",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }
@@ -30,7 +30,7 @@
     {
       "label": "acceptance: seeded headless match",
       "type": "shell",
-      "command": "${config:angelbeach.godot} --headless --path ${workspaceFolder} res://src/match/Match.tscn",
+      "command": "${config:godotTools.editorPath.godot4} --headless --path ${workspaceFolder} res://src/match/Match.tscn",
       "dependsOn": "cargo build",
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }
@@ -38,7 +38,7 @@
     {
       "label": "reimport (after adding a class or an asset)",
       "type": "shell",
-      "command": "${config:angelbeach.godot} --headless --import --path ${workspaceFolder}",
+      "command": "${config:godotTools.editorPath.godot4} --headless --import --path ${workspaceFolder}",
       "problemMatcher": []
     }
   ]
