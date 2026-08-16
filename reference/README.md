@@ -56,34 +56,33 @@ Only `AIPlayer.as` still has unported machinery, and it is the difference
 between four players who each chase the nearest ball and two pairs who play as
 teams:
 
-- **The dive.** `Player.start_dive` exists and nothing calls it. Six attempts,
-  all reverted. The sixth finally isolated the cause, and it is not the dive.
+- **The dive.** `Player.start_dive` exists and nothing calls it. Seven
+  attempts, all reverted. The seventh finished the diagnosis, and the answer is
+  that the dive is not portable until the AI's POSITIONING is.
 
-  Running the candidate search with the dive DISABLED gives **5 CONTACT lines**
-  across twelve rallies, against 147 for the shipped code. Every earlier
-  attempt's damage was the search; the dive was partially compensating for it
-  (46 contacts with, 5 without).
+  Two isolations settled it. First, restructuring `_drive` so the playability
+  test no longer decides whether to chase — only whether to stage and whether
+  to dive, which is what the source does — is behaviourally IDENTICAL to the
+  shipped code: 147 CONTACT lines, 8 rallies, same endings, to the line. So the
+  restructure is not what hurts. Second, that same build with the dive enabled
+  drops to 30 contacts with nine four-touch faults in twelve rallies. The dive
+  alone is the entire damage.
 
-  The reason is a calibration difference, not a structural one. The shipped
-  `_drive` commits to the predicted contact whenever the ball crosses that
-  height AT ALL, and lets the budget decide only how FAST to run. The search
-  version refuses to chase unless `plan()["playable"]` is true first. Our
-  budget says "not playable" far more often than the Angelscript one did — our
-  accel, settle and margin constants are not the same numbers against the same
-  distances — so gating the attempt on it starves the players and they walk
-  home instead of digging.
+  Why it cannot be gated: instrumented over a seeded run, `plan()["playable"]`
+  rejects **790 of 806 decisions (98%)** with a mean shortfall of 0.44 s. The
+  budget constants are NOT the problem — first_step_lag 0.12, hand_speed 2.5,
+  hand_travel 0.9, margin 0.08, settle_time 0.45, brake 34, ground_accel 24 all
+  match MotionPlan.as exactly, verified line by line. The players are simply
+  behind the ball at decision time nearly always, and contact happens anyway
+  because tau shrinks while they run. Tightening the gate to the source's own
+  `BodyT > DiveTau` changes nothing (still 30), because that is true on average
+  too.
 
-  So the prerequisite is not more porting. It is calibrating `playable` against
-  the original: instrument what fraction of decisions it rejects here versus
-  what `PlanIntercept` rejected there, and reconcile MB_Margin, MB_SettleTime
-  and GroundAccel until they agree. Until then, "always chase, budget sets
-  speed" is the behaviour that works, and the dive has no correct gate.
-
-  Also tried and reverted in attempt six: `bStage` staging with `MoveToHold`
-  hysteresis (110 cm out, 35 cm in) and the contact standoff (10 cm on a set,
-  35 on a dig). Faithful to the source, and it cost 147 -> 140 contacts on its
-  own. Worth revisiting only after `playable` is calibrated, since staging's
-  whole job is to stop the re-chasing that the search introduced.
+  So the prerequisite is positioning, not the dive test: `ReadyPosition`,
+  `MyPinApproachStart` and the staging that holds an expectation point instead
+  of re-chasing. Get the rejection rate down from 98% to something like the
+  original's and the dive gate becomes meaningful on its own. Attempting the
+  dive before that is fitting a threshold to a broken input.
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
 `GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,

@@ -95,6 +95,8 @@ const HUMAN_TEAM := 0             # both of team 0's players are yours
 # null means nobody has committed yet, so the pair still moves together.
 var human_locked: Player = null
 
+const HUMAN_INDEX := 0            # team 0's front player is yours
+
 var camera: Camera3D
 var hud: Label
 # Players that armed a stroke this step. Anyone missing from it is no longer

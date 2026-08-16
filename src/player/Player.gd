@@ -184,10 +184,15 @@ func _slim_torso() -> void:
 		skel.set_bone_pose_scale(b, Vector3.ONE / s)
 	skel.force_update_all_bone_transforms()
 
-# Four identical rigs on a beige court is unreadable — tint yours so you can
-# find yourself without hunting.
-func mark_as_human() -> void:
+# Four identical rigs on a beige court is unreadable — tint the one you have
+# taken over so you can find yourself without hunting. false gives the body
+# back: the override is cleared and the rig reads as AI again, which matters
+# now that control moves between players inside a match.
+func mark_as_human(active: bool = true) -> void:
 	if view == null:
+		return
+	if not active:
+		_tint(view, null)
 		return
 	var m := StandardMaterial3D.new()
 	m.albedo_color = Color(0.20, 0.55, 0.95)
