@@ -52,42 +52,37 @@ Two things the original could assume and this rig cannot:
 
 ## What is left
 
-Only `AIPlayer.as` still has unported machinery, and it is the difference
-between four players who each chase the nearest ball and two pairs who play as
-teams:
+Nothing. `AIPlayer.as` is ported.
 
-- **The dive.** `Player.start_dive` exists and nothing calls it, and after
-  eight attempts the reason is finally understood. It is not the gate, not the
-  budget, not the positioning.
+The dive was the last piece and it took nine attempts, because the obstacle was
+never in the AI: **a dive could not reach anything a step could not.**
+`start_dive` hops the body UP, `extra_crouch` is a presentation channel that
+never moves the sim node, and `_check_contacts` measured from a fixed chest
+height. So the lunge raised the contact point and extended no reach, costing
+0.42 s of committed velocity plus 0.75 s of recovery for nothing. Every gate
+tried was a way of losing less.
 
-  **A dive in this sim cannot reach anything a step cannot.** `start_dive` sets
-  `vel.y = DIVE_HOP`, so the diver goes UP. `extra_crouch = 1.0` is a
-  presentation channel and never touches the sim node's `position.y`. And
-  `_check_contacts` measures from `position.y + CHEST_OFFSET` against a fixed
-  `REACH`. So a dive raises the contact point and extends no reach at all. What
-  remains is pure cost: 0.42 s of committed velocity plus 0.75 s of recovery
-  for nothing. Every attempt to wire it therefore lost contacts, and the better
-  the gate, the less it lost — 147 -> 30 at worst.
+`Match._contact_centre` fixes that: standing, the platform is the chest;
+diving, it is `DIVE_EXTEND` out along the lunge and `DIVE_DROP` below the hip,
+near the sand. Reach along the lunge is what leaving your feet actually buys.
+The gate then measures the distance that has to be covered — contact happens
+once the platform is within `REACH`, not when the body arrives stopped on top
+of the ball, and measuring the full distance-to-contact declared the run
+hopeless on ordinary balls (147 CONTACT lines -> 19).
 
-  Also: the "98% of decisions rejected" figure recorded earlier is measured on
-  every tick and is therefore dominated by late ticks, where tau -> 0 and the
-  rejection is both trivially true and harmless because the player is already
-  standing there. Measured properly, the chaser is on average **2.10 m** from
-  its contact with 0.543 s of flight left against 0.710 s of body time. The
-  players are not badly positioned and the budget constants match the source
-  exactly. There was never a calibration gap.
+Retracted along the way: the "98% of decisions rejected" calibration theory.
+That figure is measured every tick, so it is dominated by late ticks where tau
+-> 0 and the rejection is trivially true and harmless. Measured properly the
+chaser is 2.10 m from its contact with 0.543 s of flight against 0.710 s of
+body time, and all seven budget constants match MotionPlan.as exactly. There
+was no calibration gap.
 
-  The prerequisite is the CONTACT MODEL, not the AI. A dive has to buy reach:
-  either the sim node drops while diving, or `_check_contacts` widens its
-  envelope for a diving player the way `ArmContactRadius` plus an extended
-  platform would. Give the dive something to win and its gate becomes an
-  ordinary cost/benefit test. Until then it is correctly left uncalled.
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
 `GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,
 `Ball.as`, and from `AIPlayer.as` the sticky hitter role, `ApproachForSpike`,
 the block, the split step, `ReactionDelay`, `PickAttackTarget`, the
-deep-ball role rule and the serve toss.
+deep-ball role rule, the serve toss and the dive.
 
 Verified numerically identical where the port allowed it:
 
@@ -142,8 +137,8 @@ that would actually gain wall-clock but is also the most grown-together with
     godot --headless --path . res://src/match/Match.tscn
 
 Seeded, so it reproduces exactly. Compare stdout against the previous build.
-As of the ground-attack fallback: 147 CONTACT lines (56 of them spikes), 8
-RALLY lines, 32 MOTIONSTATS lines. The MotionPlan/Contact move was verified
+As of the dive: 56 CONTACT lines (21 of them spikes), 12 RALLY lines, 48
+MOTIONSTATS lines. The MotionPlan/Contact move was verified
 byte-identical this way, as was BallSim, and so were both presentation ports.
 
 The number moves whenever the RULES move, and that is the point — it moved

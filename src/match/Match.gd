@@ -371,6 +371,24 @@ func _drive(p: Player, dt: float) -> void:
 	var flat := Vector3(contact.x - p.position.x, 0.0, contact.z - p.position.z)
 	var eff_vmax := p.move_speed * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
+
+	# The dive, gated as MotionPlan.as gates it: the run strictly cannot arrive
+	# (BodyT > DiveTau), and the lunge is worth its recovery only beyond a step
+	# and inside the burst's real range. Now that a dive extends the platform
+	# along the lunge, this is an ordinary cost/benefit test rather than a pure
+	# loss.
+	# Against the distance that actually has to be covered: contact happens as
+	# soon as the platform is within REACH, not when the body arrives stopped on
+	# top of the ball. Measuring the full distance-to-contact declared the run
+	# hopeless on ordinary balls and the diver threw itself at everything — 147
+	# CONTACT lines to 19.
+	var need := maxf(0.0, flat.length() - REACH)
+	var reach_t: float = MotionPlan.plan(need, tau, eff_vmax, Player.GROUND_ACCEL)["body_time"]
+	if reach_t > tau and p.can_dive() \
+			and tau > 0.0 and tau < DIVE_MAX_TAU \
+			and flat.length() > DIVE_MIN_DIST and flat.length() < DIVE_MAX_DIST:
+		p.start_dive(flat)
+		return
 	p.is_reaching = true
 	_go(p, contact, plan["speed_fraction"])
 	p.face_target = contact
@@ -411,6 +429,12 @@ func _hold_plan(p: Player) -> void:
 # JUMP, so it changes the sim, and the moment the headless run and the windowed
 # one disagree about who left the ground the headless numbers stop being evidence
 # about the game.
+# Dive window, from MotionPlan.as: only worthwhile beyond a lunge and inside the
+# 1.75x speed burst's real range.
+const DIVE_MIN_DIST := 1.30
+const DIVE_MAX_DIST := 4.00
+const DIVE_MAX_TAU := 0.8
+
 const BLOCK_NET_X := 0.55         # right up at the net, on our side
 const BLOCK_AIM_X := 3.0          # stuff it into the middle of their court
 const BLOCK_JUMP_RADIUS := 0.90
@@ -601,13 +625,32 @@ func _check_contacts() -> void:
 	for p in players:
 		if p == last_toucher:
 			continue
-		var d := Vector3(ball.position.x - p.position.x,
-			ball.position.y - (p.position.y + CHEST_OFFSET),
-			ball.position.z - p.position.z)
-		if d.length() > REACH:
+		var c := _contact_centre(p)
+		if (ball.position - c).length() > REACH:
 			continue
 		_do_contact(p)
 		return
+
+# Where a player's platform actually is. Standing, that is the chest. DIVING,
+# it is out along the lunge and down near the sand — which is the whole point of
+# leaving your feet, and until now the thing this sim did not model.
+#
+# A dive used to buy nothing: start_dive hops the body UP, extra_crouch is a
+# presentation channel that never moves the sim node, and this test measured
+# from a fixed chest height. So a dive raised the contact point and extended no
+# reach, costing 0.42 s of committed velocity plus 0.75 s of recovery for
+# nothing. That, not the AI, is why eight attempts to call it made the game
+# worse.
+const DIVE_EXTEND := 0.55     # the platform reaches this far along the lunge
+const DIVE_DROP := 0.45       # and this far below the hip origin, near the sand
+
+func _contact_centre(p: Player) -> Vector3:
+	if p.is_diving():
+		return Vector3(
+			p.position.x + p.dive_dir.x * DIVE_EXTEND,
+			p.position.y - DIVE_DROP,
+			p.position.z + p.dive_dir.z * DIVE_EXTEND)
+	return Vector3(p.position.x, p.position.y + CHEST_OFFSET, p.position.z)
 
 func _do_contact(p: Player) -> void:
 	# RegisterTouch owns the count now, so the rule lives in one place and the
