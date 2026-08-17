@@ -24,7 +24,15 @@ concurrency:
 
 env:
   GODOT_VERSION: 4.7.1
-  EM_VERSION: 4.0.14
+  # Read from godotengine/godot's own .github/workflows/web_builds.yml at the
+  # 4.7.1-stable tag -- it pins 4.0.11, not 4.0.14 (an earlier guess here,
+  # made without actually reading that file despite this comment's own
+  # instruction to). A mismatched Emscripten build can differ on ABI defaults
+  # -- thread/memory model, exception-handling lowering -- from what the
+  # official templates were built with, and that is a plausible cause of
+  # BOTH LinkErrors hit so far: first a shared-memory import mismatch, then
+  # (after fixing that) an exception-tag import mismatch.
+  EM_VERSION: 4.0.11
 
 jobs:
   build:

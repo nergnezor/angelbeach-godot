@@ -22,11 +22,23 @@
 # target-feature, and both have to apply to the std/core build too, which is
 # exactly what a target-scoped rustflags (rather than a step-local env var)
 # guarantees.
+#
+# NOT -Cllvm-args=-enable-emscripten-cxx-exceptions=0, which the reference
+# project (below) carries. It produced a second, different LinkError right
+# after the memory one was fixed: `Import #83 "env" "__cpp_exception": tag
+# import requires a WebAssembly.Tag` -- exactly the symptom of switching
+# from Emscripten's old JS-based exception lowering to the newer native
+# wasm-exceptions ABI, which Godot's own official templates (built with
+# plain emcc defaults, no such override -- see godotengine/godot's
+# .github/workflows/web_builds.yml) do not provide a matching import for.
+# This crate is pure Rust with no C/C++ dependencies, so there is no
+# exception-handling ABI of ours to control here -- leaving this unset lets
+# Rust's normal wasm32-unknown-emscripten codegen match whatever the
+# official templates were built expecting, rather than diverging from it.
 [target.wasm32-unknown-emscripten]
 rustflags = [
     "-C", "link-args=-sSIDE_MODULE=2",
     "-C", "link-args=-pthread",
     "-C", "target-feature=+atomics",
     "-Zlink-native-libraries=no",
-    "-Cllvm-args=-enable-emscripten-cxx-exceptions=0",
 ]
