@@ -45,6 +45,7 @@ var state := MatchState.new()
 # A serve has to go directly over. From the moment it leaves the hand until it
 # clears the tape it is still "a serve", and landing or hitting the net in that
 # window is a service fault rather than an ordinary rally end.
+var _landed := false
 var _serve_phase := false
 var _serving_team_this_serve := 0
 
@@ -260,9 +261,20 @@ func _step(dt: float) -> void:
 			if not _armed.has(p):
 				p.release_stroke()
 		_update_hud()
+	# FIRST TOUCHDOWN ends the rally, not the moment the ball comes to rest.
+	# Waiting for in_play to clear meant waiting out the whole bounce series, so
+	# the reported landing was where the ball stopped rolling — every serve was
+	# logged at x = 18.88, eleven metres past the base line, and the point was
+	# awarded from that instead of from where it actually came down. A ball that
+	# lands in and rolls out is in.
+	if not serving and ball.in_play and not _landed \
+			and ball.position.y <= ball.floor_y + Ball.RADIUS + 0.001:
+		_landed = true
+		_on_ball_hit_floor()
+		return
 	# `serving` guards the windup, where the ball is deliberately not in play yet
 	# and would otherwise read as having hit the sand on the first frame.
-	if not ball.in_play and not serving:
+	if not ball.in_play and not serving and not _landed:
 		_on_ball_hit_floor()
 
 # OnBallHitFloor, ported. Which team scores is not simply "the other side": a
@@ -372,23 +384,32 @@ func _drive(p: Player, dt: float) -> void:
 	var eff_vmax := p.move_speed * p.move_dir_speed_scale(flat)
 	var plan := MotionPlan.plan(flat.length(), tau, eff_vmax, Player.GROUND_ACCEL)
 
-	# The dive, gated as MotionPlan.as gates it: the run strictly cannot arrive
-	# (BodyT > DiveTau), and the lunge is worth its recovery only beyond a step
-	# and inside the burst's real range. Now that a dive extends the platform
-	# along the lunge, this is an ordinary cost/benefit test rather than a pure
-	# loss.
-	# Against the distance that actually has to be covered: contact happens as
-	# soon as the platform is within REACH, not when the body arrives stopped on
-	# top of the ball. Measuring the full distance-to-contact declared the run
-	# hopeless on ordinary balls and the diver threw itself at everything — 147
-	# CONTACT lines to 19.
-	var need := maxf(0.0, flat.length() - REACH)
-	var reach_t: float = MotionPlan.plan(need, tau, eff_vmax, Player.GROUND_ACCEL)["body_time"]
-	if reach_t > tau and p.can_dive() \
-			and tau > 0.0 and tau < DIVE_MAX_TAU \
-			and flat.length() > DIVE_MIN_DIST and flat.length() < DIVE_MAX_DIST:
-		p.start_dive(flat)
-		return
+	# THE DIVE IS DELIBERATELY NOT CALLED. The reach model above is what it was
+	# missing and is now correct, but the trigger is not: at serve reception the
+	# receiver is genuinely far from the ball, so every gate tried says "the run
+	# cannot make it" and the receiver lunges instead of digging. A dive commits
+	# blind for 0.42 s and then lies in 0.75 s of recovery, so a wrong one is an
+	# ace against us. Measured on the seeded run with the trigger live: 143
+	# CONTACT lines fall to 5, and seven of twelve rallies end with seq=[ ] --
+	# nobody touching the ball at all.
+	#
+	# Tightening tau did not help (0.8 s -> one decision tick plus the lunge
+	# still gave 5), because the receiver is late by the budget's reckoning on
+	# essentially every serve. What is missing is not a threshold but the
+	# source's staged approach: PlanIntercept HOLDS an expectation point while
+	# slack remains and only re-decides late, so its receivers are already
+	# closing when the dive question is asked. Wire this up after that, not
+	# before:
+	#
+	#   var need := maxf(0.0, flat.length() - REACH)
+	#   var reach_t: float = MotionPlan.plan(need, tau, eff_vmax,
+	#       Player.GROUND_ACCEL)["body_time"]
+	#   if reach_t > tau and p.can_dive() and tau > 0.0 and tau < DIVE_MAX_TAU \
+	#           and flat.length() > DIVE_MIN_DIST \
+	#           and flat.length() < DIVE_MAX_DIST:
+	#       p.start_dive(flat)
+	#       return
+
 	p.is_reaching = true
 	_go(p, contact, plan["speed_fraction"])
 	p.face_target = contact
@@ -433,7 +454,13 @@ func _hold_plan(p: Player) -> void:
 # 1.75x speed burst's real range.
 const DIVE_MIN_DIST := 1.30
 const DIVE_MAX_DIST := 4.00
-const DIVE_MAX_TAU := 0.8
+# A dive commits BLIND: the lunge owns velocity and facing for DIVE_DURATION,
+# with no chance to correct. So it may only be taken when there is no longer
+# time to think again — one more decision tick plus the lunge itself. The
+# source's 0.8 s window let receivers commit with 0.7 s of flight left, and they
+# threw themselves past serves they could have run down: seven of twelve rallies
+# became aces with nobody touching the ball.
+const DIVE_MAX_TAU := 0.8         # the source's outer bound; the gate below is tighter
 
 const BLOCK_NET_X := 0.55         # right up at the net, on our side
 const BLOCK_AIM_X := 3.0          # stuff it into the middle of their court
@@ -801,6 +828,7 @@ func _serve() -> void:
 	_serve_from = from
 	_serve_vel = Contact.ballistic_velocity(from, to, 1.8)
 	serving = true
+	_landed = false
 	_served = false
 	_tossed = false
 	_tossing = false

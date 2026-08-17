@@ -52,30 +52,29 @@ Two things the original could assume and this rig cannot:
 
 ## What is left
 
-Nothing. `AIPlayer.as` is ported.
+The dive's TRIGGER, and only that. Everything else in `AIPlayer.as` is ported.
 
-The dive was the last piece and it took nine attempts, because the obstacle was
-never in the AI: **a dive could not reach anything a step could not.**
-`start_dive` hops the body UP, `extra_crouch` is a presentation channel that
-never moves the sim node, and `_check_contacts` measured from a fixed chest
-height. So the lunge raised the contact point and extended no reach, costing
-0.42 s of committed velocity plus 0.75 s of recovery for nothing. Every gate
-tried was a way of losing less.
+Two of its three parts are in and correct. `Match._contact_centre` gives a dive
+real reach — standing, the platform is the chest; diving, it is `DIVE_EXTEND`
+out along the lunge and `DIVE_DROP` below the hip, near the sand. That was the
+missing piece behind eight failed attempts: before it, a dive raised the contact
+point and extended nothing, so leaving your feet was pure cost.
 
-`Match._contact_centre` fixes that: standing, the platform is the chest;
-diving, it is `DIVE_EXTEND` out along the lunge and `DIVE_DROP` below the hip,
-near the sand. Reach along the lunge is what leaving your feet actually buys.
-The gate then measures the distance that has to be covered — contact happens
-once the platform is within `REACH`, not when the body arrives stopped on top
-of the ball, and measuring the full distance-to-contact declared the run
-hopeless on ordinary balls (147 CONTACT lines -> 19).
+The trigger is still wrong, and the reason is now specific. At serve reception
+the receiver genuinely is far from the ball, so every gate tried answers "the
+run cannot make it" and the receiver lunges instead of digging. A dive commits
+blind for 0.42 s and then lies in 0.75 s of recovery, so a wrong one is an ace
+against us. With the trigger live: 143 CONTACT lines fall to 5, and seven of
+twelve rallies end with `seq=[ ]` — nobody touching the ball at all. Tightening
+tau from the source's 0.8 s down to one decision tick plus the lunge changed
+nothing, because the receiver is late by the budget's reckoning on essentially
+every serve.
 
-Retracted along the way: the "98% of decisions rejected" calibration theory.
-That figure is measured every tick, so it is dominated by late ticks where tau
--> 0 and the rejection is trivially true and harmless. Measured properly the
-chaser is 2.10 m from its contact with 0.543 s of flight against 0.710 s of
-body time, and all seven budget constants match MotionPlan.as exactly. There
-was no calibration gap.
+What is missing is not a threshold but `PlanIntercept`'s staged approach: it
+HOLDS an expectation point while slack remains and only re-decides late, so its
+receivers are already closing when the dive question is asked. Port `bStage`
+and `MoveToHold` first — the commented-out gate in `Match._drive` is ready to
+uncomment after that.
 
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
@@ -137,7 +136,7 @@ that would actually gain wall-clock but is also the most grown-together with
     godot --headless --path . res://src/match/Match.tscn
 
 Seeded, so it reproduces exactly. Compare stdout against the previous build.
-As of the dive: 56 CONTACT lines (21 of them spikes), 12 RALLY lines, 48
+As of the first-touchdown fix: 143 CONTACT lines, 9 RALLY lines, 36
 MOTIONSTATS lines. The MotionPlan/Contact move was verified
 byte-identical this way, as was BallSim, and so were both presentation ports.
 
