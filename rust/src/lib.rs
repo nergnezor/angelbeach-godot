@@ -503,7 +503,15 @@ impl Contact {
     /// result, because the f32 store is part of the measured behaviour.
     #[func]
     fn placement_velocity(from: Vector3, to: Vector3, must_cross: bool) -> Vector3 {
-        let mut apex = 1.2f64;
+        // An attack starts from the LOWEST arc that could possibly work and
+        // climbs only as far as the tape forces it to: a kill is hit from above
+        // the net and driven down, it does not gain height after contact.
+        // Starting must_cross at the same 1.2 as the dig/set path — which is
+        // hunting the opposite way, for the flattest arc that still stays on our
+        // side — gave every spike a needless extra metre of loft above the hit
+        // point regardless of how far above the tape that point already was, so
+        // kills always looped instead of driving down.
+        let mut apex = if must_cross { MIN_APEX } else { 1.2f64 };
         let mut v = Self::ballistic_velocity(from, to, apex);
         for _ in 0..12 {
             let crosses = Self::crosses_net_plane(from, v);
@@ -512,7 +520,7 @@ impl Contact {
                 if crosses && Self::height_at_net_plane(from, v) >= Self::net_clear_y() {
                     return v;
                 }
-                apex += 0.6;
+                apex += 0.35;
             } else {
                 // Must NOT cross — a first or second touch that flies over is a gift.
                 if !crosses {

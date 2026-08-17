@@ -253,6 +253,17 @@ func _step(dt: float) -> void:
 			p.update_gesture(dt)
 			p._update_view()
 	ball.step(dt)
+	# The arms track the LIVE ball every frame, even though the AI behind them
+	# only re-decides at reaction_delay cadence (that gap is deliberate — it is
+	# the simulated reaction time). Without this, GestureIK read whatever
+	# ball_pos _arm_stroke last wrote at the previous decision tick, held it for
+	# up to a few tenths of a second, then jumped it — a platform that snaps to
+	# a new target every reaction tick and races SINK_SPEED to catch up, instead
+	# of a hand that follows the ball smoothly.
+	if not headless:
+		for p in players:
+			p.ball_pos = ball.position
+			p.ball_live = ball.in_play
 	_check_contacts()
 	_check_net_crossing()
 	if not headless:
