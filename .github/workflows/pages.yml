@@ -46,6 +46,14 @@ jobs:
         with:
           workspaces: rust
 
+      - name: Build the native core for the editor
+        # The Import and Export steps below run Godot's own editor binary
+        # (linux, not wasm) to drive the tooling. It loads the GDExtension
+        # too -- via the linux.debug.x86_64 slot -- so scripts referencing
+        # native classes (MotionPlan, Contact, Tuning, ...) parse. Without
+        # this the wasm build below is irrelevant: import fails first.
+        run: ./build.sh
+
       - name: Build the native core for wasm
         working-directory: rust
         env:
