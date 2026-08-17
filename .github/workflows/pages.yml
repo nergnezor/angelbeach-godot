@@ -71,6 +71,26 @@ jobs:
         # this the wasm build below is irrelevant: import fails first.
         run: ./build.sh
 
+      - name: Cache Emscripten sysroot build
+        # This is emcc's own build of libc/libc++abi/compiler-rt-wasm for the
+        # +atomics/-pthread target-feature combo below -- NOT the rust-cache
+        # above (that only covers our crate's cargo/rustc output) and NOT
+        # setup-emsdk's cache (that only covers the emsdk toolchain download,
+        # not anything built with it). Measured at 118s of a ~230s build job
+        # when this is thrown away every run via a fresh mktemp dir, which is
+        # what an earlier version of this step did deliberately, back when
+        # the flags below were still changing between CI attempts and a
+        # stale cache from a previous flag combo was a real risk. They've
+        # been stable since f8c72c5, and the key is scoped to the exact
+        # inputs that change emcc's sysroot output (EM_VERSION, the rustflags
+        # that select the codegen ABI), so a real change to either still
+        # invalidates this automatically rather than silently reusing a
+        # mismatched sysroot.
+        uses: actions/cache@v4
+        with:
+          path: .emcache
+          key: emcache-${{ env.EM_VERSION }}-${{ hashFiles('rust/.cargo/config.toml') }}
+
       - name: Build the native core for wasm
         working-directory: rust
         # The flags that make this a thread-compatible GDExtension side
@@ -81,31 +101,44 @@ jobs:
         # cc-rs, and this crate has none. See that file for why each flag is
         # there; see angelbeach.gdextension for the matching `.threads.` key
         # this output has to be registered under.
-        #
-        # EM_CACHE in a fresh dir: the flags above changed materially between
-        # CI attempts, and reusing emscripten's own build cache across that
-        # kind of change is exactly the sort of thing that produces a stale,
-        # hard-to-diagnose link artifact instead of a clean rebuild.
         run: |
-          EM_CACHE=$(mktemp -d) cargo +nightly build --release \
+          EM_CACHE="$GITHUB_WORKSPACE/.emcache" cargo +nightly build --release \
             --target wasm32-unknown-emscripten -Zbuild-std
           mkdir -p ../bin
           cp target/wasm32-unknown-emscripten/release/angelbeach.wasm \
              ../bin/libangelbeach.wasm32.release.wasm
 
+      - name: Cache Godot editor and export templates
+        # Keyed on version only -- both are immutable per Godot release, and
+        # this also cuts one more dependency on codeload/release-asset CDN
+        # flakiness (already hit repeatedly this project's CI history) out of
+        # the common case.
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot-bin
+            ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          key: godot-${{ env.GODOT_VERSION }}
+
       - name: Fetch Godot and its export templates
         run: |
           BASE=Godot_v${GODOT_VERSION}-stable_linux.x86_64
-          curl -fsSL -o godot.zip \
-            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${BASE}.zip"
-          unzip -q godot.zip && chmod +x "$BASE"
-          echo "GODOT=$PWD/$BASE" >> "$GITHUB_ENV"
-          curl -fsSL -o templates.tpz \
-            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
-          unzip -q templates.tpz
+          if [ ! -x "godot-bin/$BASE" ]; then
+            mkdir -p godot-bin
+            curl -fsSL -o godot.zip \
+              "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${BASE}.zip"
+            unzip -q godot.zip -d godot-bin && chmod +x "godot-bin/$BASE"
+          fi
+          echo "GODOT=$PWD/godot-bin/$BASE" >> "$GITHUB_ENV"
+
           DEST="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
-          mkdir -p "$DEST"
-          mv templates/* "$DEST"
+          if [ ! -d "$DEST" ]; then
+            curl -fsSL -o templates.tpz \
+              "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+            unzip -q templates.tpz
+            mkdir -p "$DEST"
+            mv templates/* "$DEST"
+          fi
 
       - name: Import
         # Godot's own editor binary reliably SIGSEGVs a few seconds after
