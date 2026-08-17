@@ -9,5 +9,14 @@ linux.release.x86_64 = "res://bin/libangelbeach.release.so"
 ; Web. Built for wasm32-unknown-emscripten and staged the same way as the
 ; native libs. The Emscripten version MUST match the one Godot's own web
 ; templates were built with, or the module fails to link against them.
-web.debug.wasm32 = "res://bin/libangelbeach.wasm32.debug.wasm"
-web.release.wasm32 = "res://bin/libangelbeach.wasm32.release.wasm"
+;
+; The `.threads.` key, not the plain `web.debug.wasm32` one: our export
+; preset forces variant/thread_support=true, so Godot's threaded web runtime
+; looks specifically for the .threads. key to find a thread-compatible side
+; module. The plain key is for the non-threaded (experimental-wasm-nothreads)
+; variant, which this project does not build -- pointing a threaded .wasm at
+; the plain key was silent (Godot found A file, just not through the lookup
+; its own threaded runtime uses) and was one layer of the memory-mismatch
+; LinkError seen at load, on top of the crate itself lacking +atomics.
+web.debug.threads.wasm32 = "res://bin/libangelbeach.wasm32.debug.wasm"
+web.release.threads.wasm32 = "res://bin/libangelbeach.wasm32.release.wasm"

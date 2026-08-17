@@ -11,8 +11,11 @@ godot = { version = "0.5.5", features = ["api-4-7"] }
 
 # Wasm export templates are threaded (see .github/workflows/pages.yml), so this
 # opts in to threaded wasm support, not `experimental-wasm-nothreads`.
+# lazy-function-tables (godot-core/codegen-lazy-fptrs) is the other half of
+# gdext's own wasm recipe -- see github.com/PgBiel/hello-gdext-wasm, the
+# reference this was checked against.
 [target.'cfg(target_family = "wasm")'.dependencies]
-godot = { version = "0.5.5", features = ["api-4-7", "experimental-wasm"] }
+godot = { version = "0.5.5", features = ["api-4-7", "experimental-wasm", "lazy-function-tables"] }
 
 # The sim is a fixed-step integrator run thousands of times per headless match;
 # an unoptimised build spends its whole budget in debug assertions. Keep debug

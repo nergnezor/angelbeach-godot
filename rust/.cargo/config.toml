@@ -1,0 +1,32 @@
+# wasm32-unknown-emscripten only -- inert for the native x86_64 build (Cargo
+# only applies a [target.<triple>] section when that triple is the active
+# build target).
+#
+# Reference: github.com/PgBiel/hello-gdext-wasm, the only other known
+# gdext-to-wasm build found, with a verified working recipe this mirrors.
+#
+# SIDE_MODULE=2: a GDExtension is a library Godot's OWN wasm module loads at
+# runtime, not a standalone program, so it has to be built as an Emscripten
+# side module rather than the default main-module executable.
+#
+# +atomics and -pthread: Godot's threaded web export templates expect a
+# shared WebAssembly.Memory. Without these two, rustc -- and the std/core
+# that -Zbuild-std recompiles from source -- emit an ordinary, non-shared
+# memory import, which is exactly the failure this was added to fix:
+#   LinkError: WebAssembly.instantiate(): Import #102 "env" "memory":
+#   mismatch in shared state of memory, declared = 0, imported = 1
+# An earlier attempt set CFLAGS/CXXFLAGS=-pthread in the workflow instead;
+# that does not reach rustc's own codegen or its link step at all -- it only
+# affects C/C++ sources compiled through cc-rs, which this crate has none
+# of. -pthread has to arrive as a link arg and +atomics as a codegen
+# target-feature, and both have to apply to the std/core build too, which is
+# exactly what a target-scoped rustflags (rather than a step-local env var)
+# guarantees.
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    "-C", "link-args=-sSIDE_MODULE=2",
+    "-C", "link-args=-pthread",
+    "-C", "target-feature=+atomics",
+    "-Zlink-native-libraries=no",
+    "-Cllvm-args=-enable-emscripten-cxx-exceptions=0",
+]

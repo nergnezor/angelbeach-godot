@@ -65,15 +65,22 @@ jobs:
 
       - name: Build the native core for wasm
         working-directory: rust
-        env:
-          # Godot's web templates are threaded, so the extension must be too, and
-          # both sides must agree on the memory model or the module will not
-          # instantiate.
-          CFLAGS: -pthread
-          CXXFLAGS: -pthread
+        # The flags that make this a thread-compatible GDExtension side
+        # module (SIDE_MODULE, +atomics, -pthread) live in
+        # rust/.cargo/config.toml, target-scoped to wasm32-unknown-emscripten
+        # -- not here as CFLAGS/CXXFLAGS, which was an earlier attempt that
+        # did not work: those only affect C/C++ sources compiled through
+        # cc-rs, and this crate has none. See that file for why each flag is
+        # there; see angelbeach.gdextension for the matching `.threads.` key
+        # this output has to be registered under.
+        #
+        # EM_CACHE in a fresh dir: the flags above changed materially between
+        # CI attempts, and reusing emscripten's own build cache across that
+        # kind of change is exactly the sort of thing that produces a stale,
+        # hard-to-diagnose link artifact instead of a clean rebuild.
         run: |
-          cargo +nightly build --release --target wasm32-unknown-emscripten \
-            -Zbuild-std
+          EM_CACHE=$(mktemp -d) cargo +nightly build --release \
+            --target wasm32-unknown-emscripten -Zbuild-std
           mkdir -p ../bin
           cp target/wasm32-unknown-emscripten/release/angelbeach.wasm \
              ../bin/libangelbeach.wasm32.release.wasm
