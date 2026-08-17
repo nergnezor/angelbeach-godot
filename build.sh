@@ -9,6 +9,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/rust"
 
+# bin/ is gitignored local state, absent on a fresh checkout (e.g. CI).
+mkdir -p ../bin
+
 # Stage by rename, never by overwrite. A running Godot -- the game, or the
 # headless editor that serves the LSP -- has this .so mmap'd. `cp` rewrites
 # the bytes under the same inode, so the next page fault into the file reads
