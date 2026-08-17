@@ -33,6 +33,7 @@ env:
   # BOTH LinkErrors hit so far: first a shared-memory import mismatch, then
   # (after fixing that) an exception-tag import mismatch.
   EM_VERSION: 4.0.11
+  EMSDK_CACHE_FOLDER: emsdk-cache
 
 jobs:
   build:
@@ -40,9 +41,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache Emscripten SDK and sysroot build
+        # setup-emsdk's own actions-cache-folder handling (below) only saves
+        # right after install, before any build runs -- it can't see what
+        # emcc writes into EM_CACHE during the wasm build step later. This
+        # step wraps the same folder so its post-job save also captures that.
+        #
+        # The other half of this, and the one that actually matters: setting
+        # actions-cache-folder makes setup-emsdk install emsdk at this fixed,
+        # repo-relative path instead of its default $RUNNER_TEMP/<random-uuid>
+        # one (confirmed by reading setup-emsdk's own dist/index.js). That
+        # matters because Emscripten's cache has its own internal "sanity"
+        # check that embeds the emsdk install path -- confirmed via a real CI
+        # run where EM_CACHE was already being restored by actions/cache, yet
+        # the build logged `shared:INFO: (Emscripten: config changed,
+        # clearing cache)` and silently rebuilt everything anyway, because
+        # the path baked into the cached sanity record didn't match that
+        # run's fresh random temp path. Every run burned the same ~120s
+        # regardless of the cache restore succeeding. A stable install path
+        # fixes the sanity check, which is what actually lets the cache do
+        # anything.
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.EMSDK_CACHE_FOLDER }}
+          key: emsdk-${{ env.EM_VERSION }}-${{ hashFiles('rust/.cargo/config.toml') }}
+
       - uses: mymindstorm/setup-emsdk@v14
         with:
           version: ${{ env.EM_VERSION }}
+          actions-cache-folder: ${{ env.EMSDK_CACHE_FOLDER }}
 
       - uses: dtolnay/rust-toolchain@nightly
         with:
@@ -71,26 +98,6 @@ jobs:
         # this the wasm build below is irrelevant: import fails first.
         run: ./build.sh
 
-      - name: Cache Emscripten sysroot build
-        # This is emcc's own build of libc/libc++abi/compiler-rt-wasm for the
-        # +atomics/-pthread target-feature combo below -- NOT the rust-cache
-        # above (that only covers our crate's cargo/rustc output) and NOT
-        # setup-emsdk's cache (that only covers the emsdk toolchain download,
-        # not anything built with it). Measured at 118s of a ~230s build job
-        # when this is thrown away every run via a fresh mktemp dir, which is
-        # what an earlier version of this step did deliberately, back when
-        # the flags below were still changing between CI attempts and a
-        # stale cache from a previous flag combo was a real risk. They've
-        # been stable since f8c72c5, and the key is scoped to the exact
-        # inputs that change emcc's sysroot output (EM_VERSION, the rustflags
-        # that select the codegen ABI), so a real change to either still
-        # invalidates this automatically rather than silently reusing a
-        # mismatched sysroot.
-        uses: actions/cache@v4
-        with:
-          path: .emcache
-          key: emcache-${{ env.EM_VERSION }}-${{ hashFiles('rust/.cargo/config.toml') }}
-
       - name: Build the native core for wasm
         working-directory: rust
         # The flags that make this a thread-compatible GDExtension side
@@ -101,8 +108,12 @@ jobs:
         # cc-rs, and this crate has none. See that file for why each flag is
         # there; see angelbeach.gdextension for the matching `.threads.` key
         # this output has to be registered under.
+        #
+        # EM_CACHE lives inside the same folder the step above caches (see
+        # that step's comment for why the folder has to be at this fixed
+        # path rather than emsdk's default location).
         run: |
-          EM_CACHE="$GITHUB_WORKSPACE/.emcache" cargo +nightly build --release \
+          EM_CACHE="$GITHUB_WORKSPACE/$EMSDK_CACHE_FOLDER/sysroot-cache" cargo +nightly build --release \
             --target wasm32-unknown-emscripten -Zbuild-std
           mkdir -p ../bin
           cp target/wasm32-unknown-emscripten/release/angelbeach.wasm \
