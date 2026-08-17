@@ -1,0 +1,61 @@
+# The acceptance run, on every push. The project's whole verification story is
+# one seeded headless match whose stdout is compared against the previous build,
+# so CI's job is to make that run and fail loudly when it stops running at all.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  GODOT_VERSION: 4.7.1
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Fetch Godot
+        run: |
+          BASE=Godot_v${GODOT_VERSION}-stable_linux.x86_64
+          curl -fsSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${BASE}.zip"
+          unzip -q godot.zip
+          chmod +x "$BASE"
+          echo "GODOT=$PWD/$BASE" >> "$GITHUB_ENV"
+
+      - name: Build the native core
+        run: ./build.sh --release
+
+      - name: Import
+        # A cold checkout has no .godot/, and without it every class registered
+        # by a script is unknown and the scene fails to parse. This is the step
+        # whose absence made the first A/B runs produce only parse errors.
+        run: $GODOT --headless --import --path .
+
+      - name: Seeded acceptance run
+        run: |
+          set -o pipefail
+          $GODOT --headless --path . res://src/match/Match.tscn 2>&1 | tee run.log
+          grep -q 'MATCH DONE' run.log
+          # Any script error is a failure even when the run completes: a parse
+          # error in the windowed half is invisible to the numbers, which is
+          # exactly how a broken build survived several green runs.
+          ! grep -qiE 'SCRIPT ERROR|Parse Error' run.log
+          echo "contacts=$(grep -c CONTACT run.log) rallies=$(grep -c 'RALLY end' run.log)"
+
+      - name: Spike 1 — movement budget PORTCHECK
+        run: $GODOT --headless --path . res://src/debug/Spike1.tscn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-log
+          path: run.log
