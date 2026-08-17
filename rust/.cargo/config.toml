@@ -44,9 +44,9 @@
 # gdext-to-wasm combination -- more authoritative than the third-party
 # hello-gdext-wasm project this file previously cited, which predates
 # whatever gdext/rustc version introduced the need for these two:
-#   -Z emscripten-wasm-eh=false   -- forces the legacy JS-based lowering,
-#     overriding whatever makes Rust default to native wasm exceptions
-#     here despite -enable-emscripten-cxx-exceptions=0 also being set.
+#   forcing the legacy JS-based exception lowering -- overriding whatever
+#     makes Rust default to native wasm exceptions here despite
+#     -enable-emscripten-cxx-exceptions=0 also being set.
 #   -Z default-visibility=hidden  -- isolates symbols; matters once/if this
 #     extension shares a page with other wasm modules, harmless otherwise.
 # Re-added -enable-emscripten-cxx-exceptions=0 alongside them since that's
@@ -54,13 +54,21 @@
 # here -- no evidence it's actively harmful, and diverging from the
 # documented-working combination without a specific reason is how the
 # previous, wrong "just remove it" fix happened.
+#
+# The docs' own flag for the first one, `-Z emscripten-wasm-eh=false`, does
+# not exist on this toolchain (nightly 2026-08-16): `error: unknown unstable
+# option`, confirmed against `rustc -Z help`, which lists no such flag.
+# `rustc --target wasm32-unknown-emscripten --print target-features` does
+# list a real, matching lever: the `exception-handling` Wasm target feature,
+# which controls exactly this (LLVM's Wasm backend chooses the native
+# Tag-based ABI when it's on). Disabling it via target-feature achieves the
+# same "force legacy lowering" result the missing flag was meant to.
 [target.wasm32-unknown-emscripten]
 rustflags = [
     "-C", "link-args=-sSIDE_MODULE=2",
     "-C", "link-args=-pthread",
-    "-C", "target-feature=+atomics",
+    "-C", "target-feature=+atomics,-exception-handling",
     "-C", "llvm-args=-enable-emscripten-cxx-exceptions=0",
     "-Z", "default-visibility=hidden",
     "-Z", "link-native-libraries=no",
-    "-Z", "emscripten-wasm-eh=false",
 ]
