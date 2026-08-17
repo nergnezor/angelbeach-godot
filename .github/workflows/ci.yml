@@ -29,7 +29,7 @@ jobs:
         # never draws anything; this just satisfies that expectation.
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y xvfb gdb
 
       - name: Fetch Godot
         run: |
@@ -47,11 +47,14 @@ jobs:
         # rust/Cargo.toml already keeps this fast enough for the sim.
         run: ./build.sh
 
-      - name: Import
-        # A cold checkout has no .godot/, and without it every class registered
-        # by a script is unknown and the scene fails to parse. This is the step
-        # whose absence made the first A/B runs produce only parse errors.
-        run: xvfb-run --auto-servernum $GODOT --headless --import --path .
+      - name: Import (under gdb for a backtrace)
+        # TEMPORARY diagnostic: the plain command above aborts with no
+        # message on the runner (unreproducible locally). Get a backtrace
+        # before deciding on a real fix.
+        run: |
+          xvfb-run --auto-servernum \
+            gdb -q -batch -ex run -ex bt -ex "thread apply all bt" -ex quit \
+            --args $GODOT --headless --import --path .
 
       - name: Seeded acceptance run
         run: |
