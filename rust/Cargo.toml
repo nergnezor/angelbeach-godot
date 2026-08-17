@@ -9,6 +9,11 @@ crate-type = ["cdylib"]
 [dependencies]
 godot = { version = "0.5.5", features = ["api-4-7"] }
 
+# Wasm export templates are threaded (see .github/workflows/pages.yml), so this
+# opts in to threaded wasm support, not `experimental-wasm-nothreads`.
+[target.'cfg(target_family = "wasm")'.dependencies]
+godot = { version = "0.5.5", features = ["api-4-7", "experimental-wasm"] }
+
 # The sim is a fixed-step integrator run thousands of times per headless match;
 # an unoptimised build spends its whole budget in debug assertions. Keep debug
 # symbols so a crash in the .so is still readable.
