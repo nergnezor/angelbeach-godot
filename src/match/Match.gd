@@ -422,12 +422,43 @@ func _drive(p: Player, dt: float) -> void:
 # depth and accuracy scale with Difficulty, so a weaker attacker hits shorter
 # AND sprays wider — one number, two tells.
 func _pick_attack_target(p: Player) -> Vector3:
-	var target_x := -_sign(p.team) * lerpf(3.5, 7.0, p.difficulty)
-	# Aim at whichever half is less defended, approximated as away from the side
-	# the attacker is coming from.
-	var aim_z := -2.5 if p.position.z > 0.0 else 2.5
+	# Search the opponent's court for the spot FURTHEST from anyone who could
+	# dig it. The source's comment asks for exactly this — "aim for the
+	# opponent's open court, away from their players" — but its implementation
+	# only ever picked a fixed depth and one of two halves, so every attack from
+	# a given player landed in the same place and the defence never had to move.
+	#
+	# Deterministic sweep, no RNG: the only draw is the placement error below, so
+	# the seeded baseline keeps its single randf_range per spike.
+	var opp := 1 - p.team
+	var s := -_sign(p.team)                 # sign of THEIR half
+	var best := Vector3(s * 4.0, 0.0, 0.0)
+	var best_score := -1.0
+	for xi in 6:
+		for zi in 7:
+			# Inside the lines with a margin: a kill that lands out is a point
+			# for them, and the aim carries error on top of this.
+			var tx := s * lerpf(1.2, COURT_X - 0.8, xi / 5.0)
+			var tz := lerpf(-COURT_Z + 0.6, COURT_Z - 0.6, zi / 6.0)
+			var nearest := 999.0
+			for q: Player in players:
+				if q.team != opp:
+					continue
+				nearest = minf(nearest, Vector2(tx - q.position.x, tz - q.position.z).length())
+			# Depth is worth a little on its own: a ball driven deep gives the
+			# defender less time even when they are the same distance away.
+			# Depth is worth a LITTLE, not a lot: at 0.15 the bonus reached 1.08 at
+			# the base line and swamped every defender distance, so the attack
+			# just hammered the deepest corner every time — the same failure the
+			# fixed target had, one step further out.
+			var score := nearest + absf(tx) * 0.04
+			if score > best_score:
+				best_score = score
+				best = Vector3(tx, 0.0, tz)
+	# Accuracy still scales with Difficulty — a weaker attacker finds the gap and
+	# then misses it by more.
 	var err := randf_range(-1.8, 1.8) * (1.0 - p.difficulty)
-	return Vector3(target_x, 0.0, clampf(aim_z + err, -3.9, 3.9))
+	return Vector3(best.x, 0.0, clampf(best.z + err, -COURT_Z + 0.3, COURT_Z - 0.3))
 
 # Every AI move goes through here so the goal is remembered as well as acted on.
 func _go(p: Player, goal: Vector3, speed: float = 1.0) -> void:
