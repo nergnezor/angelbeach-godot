@@ -85,17 +85,13 @@ func _ready() -> void:
 # stay byte-identical to the seeded baseline, so nothing here may touch the
 # rules, the RNG or the step order.
 
-const HUMAN_TEAM := 0             # both of team 0's players are yours
+const HUMAN_TEAM := 0             # team 0 is the side you may take over
 
-# You drive your WHOLE side at once — both players read the same stick — until
-# you press jump. That press is the commit: whoever is nearest the ball takes
-# off and keeps the stick for the rest of the rally, and your partner hands
-# themselves back to the AI. Steering the pair is the positioning phase; the
-# jump is the decision, and it is the only thing that picks a body for you.
-# null means nobody has committed yet, so the pair still moves together.
-var human_locked: Player = null
-
-const HUMAN_INDEX := 0            # team 0's front player is yours
+# Nobody is on the stick by default: all four players run the budget-driven AI
+# and the match plays itself. JUMP is the takeover — press it and whoever on
+# your team is nearest the ball becomes yours, jumps on that same frame, and
+# stays yours until the rally ends. null means the court is entirely the AI's.
+var human_player: Player = null
 
 var camera: Camera3D
 var hud: Label
@@ -115,12 +111,8 @@ func _build_presentation() -> void:
 		p.court = court
 
 	var model := load("res://assets/player.glb") as PackedScene
-	for i in players.size():
-		var p: Player = players[i]
+	for p in players:
 		p.setup_view(model)
-		p.human = (i == HUMAN_INDEX)
-		if p.human:
-			p.mark_as_human()
 
 	camera = Camera3D.new()
 	# Behind your own base line, 3 m up: a player's-eye view down the court.
@@ -146,13 +138,57 @@ func _update_hud() -> void:
 	if hud == null:
 		return
 	var serve_mark := "*" if state.serving_team == MatchState.Team.A else " "
-	hud.text = "YOU %d%s —  %d CPU   set %d   %s\ntouch %d/3\n\narrows / WASD to move, space to jump" % [
+	var ctrl := "space to take over the player nearest the ball" if human_player == null \
+		else "arrows / WASD to move, space to jump"
+	hud.text = "YOU %d%s —  %d CPU   set %d   %s\ntouch %d/3\n\n%s" % [
 		state.score_a, serve_mark, state.score_b, state.current_set,
-		state.sets_string(), touches]
+		state.sets_string(), touches, ctrl]
 
-# Your player takes the stick; the other three keep the budget-driven AI.
-# Input is camera-relative and derived from the camera's own basis rather than
-# hard-coded axes, so moving the camera cannot silently invert your controls.
+# The takeover. Nearest to the BALL rather than nearest to anything of yours:
+# pressing jump says "this play, now", and the body that moment belongs to is
+# the one standing under the ball. It runs before the drive loop so the frame
+# that grabs the player is also the frame that spends the jump — a takeover
+# that cost a frame would always land late on exactly the balls you press for.
+func _take_over() -> void:
+	var pick: Player = null
+	var best := INF
+	for p in players:
+		if p.team != HUMAN_TEAM:
+			continue
+		# Not the server mid-windup: the serve launches from a scripted spot, so
+		# dragging that body around would fire the ball from where they no longer
+		# stand.
+		if serving and p == server:
+			continue
+		var flat := Vector2(p.position.x - ball.position.x, p.position.z - ball.position.z)
+		var d := flat.length_squared()
+		if d < best:
+			best = d
+			pick = p
+	if pick == null or pick == human_player:
+		return
+	_release_human()
+	human_player = pick
+	pick.human = true
+	pick.mark_as_human(true)
+
+# Hand the body back to the AI. The stale plan goes with it: a goal chosen
+# before you took over is a decision nobody made any more, and leaving it set
+# means the player sprints off to finish it the moment they are released.
+func _release_human() -> void:
+	if human_player == null:
+		return
+	human_player.human = false
+	human_player.move_input = Vector3.ZERO
+	human_player.has_plan = false
+	human_player.has_face_target = false
+	human_player.mark_as_human(false)
+	human_player = null
+
+# The player you took over takes the stick; the other three keep the
+# budget-driven AI. Input is camera-relative and derived from the camera's own
+# basis rather than hard-coded axes, so moving the camera cannot silently
+# invert your controls.
 func _human_drive(p: Player) -> void:
 	var iv := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 	if camera == null:
@@ -203,6 +239,11 @@ func _step(dt: float) -> void:
 		return
 	if serving:
 		_step_serve(dt)
+	# Windowed only, and deliberately outside the per-player loop: the takeover
+	# picks ONE body out of the four, so it cannot be a decision each player
+	# makes about itself.
+	if not headless and Input.is_action_just_pressed("ui_accept"):
+		_take_over()
 	_armed.clear()
 	for p in players:
 		_drive(p, dt)
@@ -682,6 +723,10 @@ var _tossing := false
 var _tossed := false
 
 func _serve() -> void:
+	# The takeover lasts one rally. A new serve starts with the court back under
+	# full AI, so every point begins the same way and you press for the ball you
+	# actually want rather than inheriting a body from the last exchange.
+	_release_human()
 	touches = 0
 	last_touch_team = -1
 	last_toucher = null
