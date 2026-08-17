@@ -56,33 +56,32 @@ Only `AIPlayer.as` still has unported machinery, and it is the difference
 between four players who each chase the nearest ball and two pairs who play as
 teams:
 
-- **The dive.** `Player.start_dive` exists and nothing calls it. Seven
-  attempts, all reverted. The seventh finished the diagnosis, and the answer is
-  that the dive is not portable until the AI's POSITIONING is.
+- **The dive.** `Player.start_dive` exists and nothing calls it, and after
+  eight attempts the reason is finally understood. It is not the gate, not the
+  budget, not the positioning.
 
-  Two isolations settled it. First, restructuring `_drive` so the playability
-  test no longer decides whether to chase — only whether to stage and whether
-  to dive, which is what the source does — is behaviourally IDENTICAL to the
-  shipped code: 147 CONTACT lines, 8 rallies, same endings, to the line. So the
-  restructure is not what hurts. Second, that same build with the dive enabled
-  drops to 30 contacts with nine four-touch faults in twelve rallies. The dive
-  alone is the entire damage.
+  **A dive in this sim cannot reach anything a step cannot.** `start_dive` sets
+  `vel.y = DIVE_HOP`, so the diver goes UP. `extra_crouch = 1.0` is a
+  presentation channel and never touches the sim node's `position.y`. And
+  `_check_contacts` measures from `position.y + CHEST_OFFSET` against a fixed
+  `REACH`. So a dive raises the contact point and extends no reach at all. What
+  remains is pure cost: 0.42 s of committed velocity plus 0.75 s of recovery
+  for nothing. Every attempt to wire it therefore lost contacts, and the better
+  the gate, the less it lost — 147 -> 30 at worst.
 
-  Why it cannot be gated: instrumented over a seeded run, `plan()["playable"]`
-  rejects **790 of 806 decisions (98%)** with a mean shortfall of 0.44 s. The
-  budget constants are NOT the problem — first_step_lag 0.12, hand_speed 2.5,
-  hand_travel 0.9, margin 0.08, settle_time 0.45, brake 34, ground_accel 24 all
-  match MotionPlan.as exactly, verified line by line. The players are simply
-  behind the ball at decision time nearly always, and contact happens anyway
-  because tau shrinks while they run. Tightening the gate to the source's own
-  `BodyT > DiveTau` changes nothing (still 30), because that is true on average
-  too.
+  Also: the "98% of decisions rejected" figure recorded earlier is measured on
+  every tick and is therefore dominated by late ticks, where tau -> 0 and the
+  rejection is both trivially true and harmless because the player is already
+  standing there. Measured properly, the chaser is on average **2.10 m** from
+  its contact with 0.543 s of flight left against 0.710 s of body time. The
+  players are not badly positioned and the budget constants match the source
+  exactly. There was never a calibration gap.
 
-  So the prerequisite is positioning, not the dive test: `ReadyPosition`,
-  `MyPinApproachStart` and the staging that holds an expectation point instead
-  of re-chasing. Get the rejection rate down from 98% to something like the
-  original's and the dive gate becomes meaningful on its own. Attempting the
-  dive before that is fitting a threshold to a broken input.
+  The prerequisite is the CONTACT MODEL, not the AI. A dive has to buy reach:
+  either the sim node drops while diving, or `_check_contacts` widens its
+  envelope for a diving player the way `ArmContactRadius` plus an extended
+  platform would. Give the dive something to win and its gate becomes an
+  ordinary cost/benefit test. Until then it is correctly left uncalled.
 
 Ported and verified: `Environment.as`, `Court.as`, `GameMode.as`,
 `GameState.as`, `VolleyballPlayer.as`, `PlayerIK.as`, `MotionPlan.as`,
