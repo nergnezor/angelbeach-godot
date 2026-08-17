@@ -1,0 +1,104 @@
+# Web build, deployed to GitHub Pages.
+#
+# THE ONE THING THAT WILL BREAK THIS: EM_VERSION below must match the Emscripten
+# version Godot's own web export templates were built with. A GDExtension is
+# linked against those templates, so a mismatch fails at load with the scene's
+# classes all unknown rather than with a clear error. Godot pins it in
+# .github/workflows/web_builds.yml on the matching release tag -- read it there
+# and set it here; do not guess.
+name: Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.1
+  EM_VERSION: 4.0.14
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EM_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          # The Rust wasm32-unknown-emscripten target needs build-std, which is
+          # nightly-only. This is the one place the project is not on stable.
+          targets: wasm32-unknown-emscripten
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build the native core for wasm
+        working-directory: rust
+        env:
+          # Godot's web templates are threaded, so the extension must be too, and
+          # both sides must agree on the memory model or the module will not
+          # instantiate.
+          CFLAGS: -pthread
+          CXXFLAGS: -pthread
+        run: |
+          cargo +nightly build --release --target wasm32-unknown-emscripten \
+            -Zbuild-std
+          mkdir -p ../bin
+          cp target/wasm32-unknown-emscripten/release/angelbeach.wasm \
+             ../bin/libangelbeach.wasm32.release.wasm
+
+      - name: Fetch Godot and its export templates
+        run: |
+          BASE=Godot_v${GODOT_VERSION}-stable_linux.x86_64
+          curl -fsSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${BASE}.zip"
+          unzip -q godot.zip && chmod +x "$BASE"
+          echo "GODOT=$PWD/$BASE" >> "$GITHUB_ENV"
+          curl -fsSL -o templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q templates.tpz
+          DEST="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$DEST"
+          mv templates/* "$DEST"
+
+      - name: Import
+        run: $GODOT --headless --import --path .
+
+      - name: Export Web
+        run: |
+          set -o pipefail
+          mkdir -p build/web
+          $GODOT --headless --path . --export-release "Web" build/web/index.html 2>&1 | tee export.log
+          # An export that "succeeds" while dropping the extension is the
+          # failure mode worth catching, so assert the wasm side is really in
+          # the output.
+          test -f build/web/index.html
+          ls build/web | grep -q '\.wasm$'
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

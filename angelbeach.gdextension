@@ -6,3 +6,8 @@ reloadable = true
 [libraries]
 linux.debug.x86_64 = "res://bin/libangelbeach.debug.so"
 linux.release.x86_64 = "res://bin/libangelbeach.release.so"
+; Web. Built for wasm32-unknown-emscripten and staged the same way as the
+; native libs. The Emscripten version MUST match the one Godot's own web
+; templates were built with, or the module fails to link against them.
+web.debug.wasm32 = "res://bin/libangelbeach.wasm32.debug.wasm"
+web.release.wasm32 = "res://bin/libangelbeach.wasm32.release.wasm"

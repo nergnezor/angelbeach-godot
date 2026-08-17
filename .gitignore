@@ -1,7 +1,8 @@
 # Godot 4
 .godot/
-export_presets.cfg
 *.translation
+# NOT export_presets.cfg: the Web preset is how CI builds the Pages deploy,
+# so it is source, not local state.
 
 # Build output
 builds/
