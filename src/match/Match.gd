@@ -428,11 +428,18 @@ func _pick_attack_target(p: Player) -> Vector3:
 	# only ever picked a fixed depth and one of two halves, so every attack from
 	# a given player landed in the same place and the defence never had to move.
 	#
-	# Deterministic sweep, no RNG: the only draw is the placement error below, so
-	# the seeded baseline keeps its single randf_range per spike.
+	# The defenders' home positions barely move inside a rally, so this sweep
+	# used to be deterministic AND its argmax was almost always the exact same
+	# grid cell — the boundary column farthest from mid-court, tie-broken the
+	# same way every time. Every kill from a given player landed in the same
+	# corner, rally after rally: the very failure the comment below already
+	# describes, just one layer deeper. Collecting every near-tied cell and
+	# drawing among them is the fix; the placement error below still applies
+	# on top.
 	var opp := 1 - p.team
 	var s := -_sign(p.team)                 # sign of THEIR half
-	var best := Vector3(s * 4.0, 0.0, 0.0)
+	var candidates: Array[Vector3] = []
+	var scores: Array[float] = []
 	var best_score := -1.0
 	for xi in 6:
 		for zi in 7:
@@ -452,9 +459,17 @@ func _pick_attack_target(p: Player) -> Vector3:
 			# just hammered the deepest corner every time — the same failure the
 			# fixed target had, one step further out.
 			var score := nearest + absf(tx) * 0.04
-			if score > best_score:
-				best_score = score
-				best = Vector3(tx, 0.0, tz)
+			candidates.append(Vector3(tx, 0.0, tz))
+			scores.append(score)
+			best_score = maxf(best_score, score)
+	# Anything within a racket-length of the best is an equally good kill —
+	# pick among those at random instead of always the first one the sweep
+	# happens to visit.
+	var near_best: Array[Vector3] = []
+	for i in candidates.size():
+		if scores[i] >= best_score - 0.35:
+			near_best.append(candidates[i])
+	var best: Vector3 = near_best[randi() % near_best.size()]
 	# Accuracy still scales with Difficulty — a weaker attacker finds the gap and
 	# then misses it by more.
 	var err := randf_range(-1.8, 1.8) * (1.0 - p.difficulty)
@@ -511,9 +526,13 @@ func _play_block(p: Player) -> bool:
 	if bt[0]:
 		var strike: Vector3 = bt[1]
 		spike_incoming = absf(strike.x) < 3.0 and absf(strike.z) < COURT_Z
-	var goal_z: float = clampf(ball.position.z, -COURT_Z + 0.6, COURT_Z - 0.6) \
-		if spike_incoming else _home(p).z
-	var goal := Vector3(_sign(p.team) * BLOCK_NET_X, Player.PLAYER_HEIGHT, goal_z)
+	# Only hold the net line while there's a spike worth blocking. Chasing the
+	# ball's z but always parking at BLOCK_NET_X meant a blocker with no real
+	# block to make still camped right at the net instead of falling back to
+	# the middle — the one place they can actually help the back-row defender.
+	var goal := Vector3(_sign(p.team) * BLOCK_NET_X, Player.PLAYER_HEIGHT,
+			clampf(ball.position.z, -COURT_Z + 0.6, COURT_Z - 0.6)) \
+		if spike_incoming else _home(p)
 	p.face_target = ball.position
 	p.has_face_target = true
 	if not p.grounded:
