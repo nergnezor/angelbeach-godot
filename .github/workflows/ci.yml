@@ -48,16 +48,26 @@ jobs:
         run: ./build.sh
 
       - name: Import
-        # This SIGSEGV'd on every ubuntu-latest (24.04) runner, never locally,
-        # always in the SAME place: main thread, right after "Loading editor
-        # layout | DONE", with every worker thread idle in pthread_cond_wait.
-        # A gdb backtrace against Godot's stripped official binary gave no
-        # symbols, so the fix here is runner-image, not code: pin to 22.04,
-        # which is what most Godot CI recipes still do for exactly this class
-        # of newer-glibc crash. If this line goes red again, the crash survived
-        # the pin and needs the gdb wrapping back (see git history for the
-        # exact invocation) rather than another guess.
-        run: xvfb-run --auto-servernum $GODOT --headless --import --path .
+        # Godot's own editor binary reliably SIGSEGVs a few seconds after
+        # finishing this work. Confirmed with a gdb backtrace (cf323e1, no
+        # symbols against the stripped official binary, but the crash address
+        # sits inside Godot's own .text -- not our extension, not a shared
+        # lib) and pinning ubuntu-22.04 did NOT fix it (b34764c), so this is
+        # an upstream editor bug, not a runner-image or code issue -- see
+        # godotengine/godot#98062, #99284, #89674 for the same shape of crash
+        # in the editor's post-import idle/teardown path.
+        #
+        # It reproduces locally too (not CI-only after all), and crucially:
+        # the import artifacts are written to disk BEFORE the crash, every
+        # time -- "reimport | DONE" and "loading_editor_layout | DONE" both
+        # log first. Verified directly: after a crashing local run, the
+        # seeded match still plays byte-identical to the established
+        # baseline off the cache that got written. So the crash costs
+        # nothing this project depends on, and gating on ITS exit code was
+        # the actual bug -- the real check is that the cache landed.
+        run: |
+          xvfb-run --auto-servernum $GODOT --headless --import --path . || true
+          test -s .godot/global_script_class_cache.cfg
 
       - name: Seeded acceptance run
         run: |

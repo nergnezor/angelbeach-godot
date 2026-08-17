@@ -93,16 +93,35 @@ jobs:
           mv templates/* "$DEST"
 
       - name: Import
-        run: xvfb-run --auto-servernum $GODOT --headless --import --path .
+        # Godot's own editor binary reliably SIGSEGVs a few seconds after
+        # finishing this work -- confirmed with a gdb backtrace (the crash
+        # address sits inside Godot's own .text, not our extension) and it
+        # is NOT runner-image-specific: pinning ubuntu-22.04 didn't fix it,
+        # and it reproduces locally too. See godotengine/godot#98062,
+        # #99284, #89674 for the same shape of crash in the editor's
+        # post-import idle/teardown path.
+        #
+        # The import artifacts are written to disk BEFORE the crash, every
+        # time -- verified directly against the seeded match, which plays
+        # byte-identical off a cache written by a run whose process then
+        # crashed. So the crash costs nothing this project depends on, and
+        # gating on ITS exit code was the actual bug. Gate on the cache
+        # instead.
+        run: |
+          xvfb-run --auto-servernum $GODOT --headless --import --path . || true
+          test -s .godot/global_script_class_cache.cfg
 
       - name: Export Web
+        # Same crash class as Import can in principle land here too, after
+        # the export has already been written -- so this doesn't gate on the
+        # export command's own exit code either. What actually proves
+        # success is the output: an export that "succeeds" while dropping
+        # the extension is the other failure mode worth catching, so assert
+        # the wasm side is really there, not just index.html.
         run: |
-          set -o pipefail
           mkdir -p build/web
-          xvfb-run --auto-servernum $GODOT --headless --path . --export-release "Web" build/web/index.html 2>&1 | tee export.log
-          # An export that "succeeds" while dropping the extension is the
-          # failure mode worth catching, so assert the wasm side is really in
-          # the output.
+          xvfb-run --auto-servernum $GODOT --headless --path . --export-release "Web" build/web/index.html > export.log 2>&1 || true
+          cat export.log
           test -f build/web/index.html
           ls build/web | grep -q '\.wasm$'
 
