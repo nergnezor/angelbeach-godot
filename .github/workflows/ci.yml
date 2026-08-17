@@ -22,6 +22,15 @@ jobs:
         with:
           workspaces: rust
 
+      - name: Install Xvfb
+        # Even --headless touches editor-only code paths (icon/theme loading)
+        # that need a display server on Linux, or the editor binary aborts
+        # (SIGABRT, no error message) partway through --import. Godot itself
+        # never draws anything; this just satisfies that expectation.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
       - name: Fetch Godot
         run: |
           BASE=Godot_v${GODOT_VERSION}-stable_linux.x86_64
@@ -42,12 +51,12 @@ jobs:
         # A cold checkout has no .godot/, and without it every class registered
         # by a script is unknown and the scene fails to parse. This is the step
         # whose absence made the first A/B runs produce only parse errors.
-        run: $GODOT --headless --import --path .
+        run: xvfb-run --auto-servernum $GODOT --headless --import --path .
 
       - name: Seeded acceptance run
         run: |
           set -o pipefail
-          $GODOT --headless --path . res://src/match/Match.tscn 2>&1 | tee run.log
+          xvfb-run --auto-servernum $GODOT --headless --path . res://src/match/Match.tscn 2>&1 | tee run.log
           grep -q 'MATCH DONE' run.log
           # Any script error is a failure even when the run completes: a parse
           # error in the windowed half is invisible to the numbers, which is
@@ -56,7 +65,7 @@ jobs:
           echo "contacts=$(grep -c CONTACT run.log) rallies=$(grep -c 'RALLY end' run.log)"
 
       - name: Spike 1 — movement budget PORTCHECK
-        run: $GODOT --headless --path . res://src/debug/Spike1.tscn
+        run: xvfb-run --auto-servernum $GODOT --headless --path . res://src/debug/Spike1.tscn
 
       - uses: actions/upload-artifact@v4
         if: always()

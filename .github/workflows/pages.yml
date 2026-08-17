@@ -46,6 +46,15 @@ jobs:
         with:
           workspaces: rust
 
+      - name: Install Xvfb
+        # Even --headless touches editor-only code paths (icon/theme loading)
+        # that need a display server on Linux, or the editor binary aborts
+        # (SIGABRT, no error message) partway through --import. Godot itself
+        # never draws anything; this just satisfies that expectation.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
       - name: Build the native core for the editor
         # The Import and Export steps below run Godot's own editor binary
         # (linux, not wasm) to drive the tooling. It loads the GDExtension
@@ -84,13 +93,13 @@ jobs:
           mv templates/* "$DEST"
 
       - name: Import
-        run: $GODOT --headless --import --path .
+        run: xvfb-run --auto-servernum $GODOT --headless --import --path .
 
       - name: Export Web
         run: |
           set -o pipefail
           mkdir -p build/web
-          $GODOT --headless --path . --export-release "Web" build/web/index.html 2>&1 | tee export.log
+          xvfb-run --auto-servernum $GODOT --headless --path . --export-release "Web" build/web/index.html 2>&1 | tee export.log
           # An export that "succeeds" while dropping the extension is the
           # failure mode worth catching, so assert the wasm side is really in
           # the output.
