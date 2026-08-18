@@ -172,9 +172,15 @@ jobs:
         # EM_CACHE lives inside the same folder the step above caches (see
         # that step's comment for why the folder has to be at this fixed
         # path rather than emsdk's default location).
+        #
+        # -Zbuild-std=std,panic_abort (not bare -Zbuild-std): the crate is
+        # built with panic=abort (rust/.cargo/config.toml -- see that file
+        # for why), and build-std needs telling explicitly which std
+        # components to recompile for a non-default panic strategy; std
+        # alone still pulls in panic_unwind by default.
         run: |
           EM_CACHE="$GITHUB_WORKSPACE/$EMSDK_CACHE_FOLDER/sysroot-cache" cargo +nightly-2025-12-10 build --release \
-            --target wasm32-unknown-emscripten -Zbuild-std
+            --target wasm32-unknown-emscripten -Zbuild-std=std,panic_abort
           mkdir -p ../bin
           cp target/wasm32-unknown-emscripten/release/angelbeach.wasm \
              ../bin/libangelbeach.wasm32.release.wasm

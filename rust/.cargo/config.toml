@@ -57,20 +57,45 @@
 #      2025-12-06 -- the SAME day as the flip. There is no date where
 #      "before the flip" and "meets the MSRV" both hold; pinning by date
 #      pre-flip is a dead end for this project specifically.
-#   5. The actual, durable fix: pin PAST the flip instead, to a nightly new
-#      enough for the MSRV, and pass the flag explicitly to restore the
-#      legacy default it used to be (see .github/workflows/pages.yml for the
-#      exact pinned date and why -- also notes a separate, unrelated cdylib
-#      regression on some nightlies in that range, found the same way:
-#      by actually trying dates rather than assuming any post-flip nightly
-#      would do). Verified with a real local emsdk 4.0.11 build inspected
-#      via wasm-objdump: shared memory import present, zero Tag[] entries,
-#      no __cpp_exception import anywhere -- not just green CI.
+#   5. Pinning PAST the flip instead, to a nightly new enough for the MSRV,
+#      and passing the flag explicitly to restore the legacy default it used
+#      to be (see .github/workflows/pages.yml for the exact pinned date and
+#      why) DID kill the Tag import -- verified with a real local emsdk
+#      4.0.11 build inspected via wasm-objdump: shared memory import
+#      present, zero Tag[] entries, no __cpp_exception import anywhere.
+#      Deployed, and the ORIGINAL LinkError was gone. But it surfaced a
+#      further, different crash: `TypeError: resolved is not a function` at
+#      `stubs.<computed>` in index.js, during initRuntime -- reproduced with
+#      a fresh (non-cached) Playwright load with COOP/COEP forced via route
+#      interception, then pinned down to the exact symbol by patching
+#      index.js in-flight to log it: `invoke_i`, the simplest possible
+#      signature there is. Godot's own index.js contains the substring
+#      "invoke_" ZERO times anywhere -- Godot's official web template has NO
+#      JS-based exception-invoke plumbing at all, not even the trivial
+#      signature, because Godot's own C++ core does not use C++ exceptions
+#      and never needed any. There was never a legacy-JS-ABI to "match" --
+#      forcing our side to legacy JS just swapped one kind of missing-import
+#      crash (Tag) for another (invoke_*), because Godot's main module can't
+#      satisfy either scheme.
+#   6. The actual, durable fix: `panic = "abort"`. Godot's own web template
+#      needs NO exception-unwinding ABI from a loaded side module because it
+#      has none of its own; the fix is for this crate to not need one
+#      either, not to guess which ABI to request. This also happens to be
+#      the semantically correct choice independent of this whole saga: a
+#      Rust panic unwinding across the FFI boundary into Godot's C++ engine
+#      is already undefined behavior, on every platform, not just wasm.
+#      Matches the resolution godot-rust/gdext#1119 and
+#      rust-lang/compiler-team#920 both reference in passing ("resolved
+#      using panic=abort") without either spelling out why. `-Zbuild-std`
+#      needs to be told explicitly which std components to build for a
+#      non-default panic strategy -- see the wasm build step in
+#      .github/workflows/pages.yml for `-Zbuild-std=std,panic_abort`.
 [target.wasm32-unknown-emscripten]
 rustflags = [
     "-C", "link-args=-sSIDE_MODULE=2",
     "-C", "link-args=-pthread",
     "-C", "target-feature=+atomics",
+    "-C", "panic=abort",
     "-Z", "default-visibility=hidden",
     "-Z", "link-native-libraries=no",
     "-Z", "emscripten-wasm-eh=false",
