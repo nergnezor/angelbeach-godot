@@ -141,13 +141,13 @@ func setup_view(scene: PackedScene) -> void:
 		# Before the gesture solver, which measures the arm off the live pose:
 		# reshape first and it measures the body it is actually going to drive.
 		_slim_torso()
-		# Order matters: the gesture's crouch channel moves the hips, and the
-		# feet have to be planted after that. Modifiers run in child order.
+		# Order matters: the gesture's crouch channel sinks the whole model, and
+		# the feet have to be re-planted after that. Modifiers run in child order.
 		gesture = GestureIK.new()
 		gesture.setup(skel, self)
 		skel.add_child(gesture)
 		foot_lock = FootLock.new()
-		foot_lock.setup(skel)
+		foot_lock.setup(skel, self)
 		skel.add_child(foot_lock)
 	if anim != null:
 		anim.play("idle")

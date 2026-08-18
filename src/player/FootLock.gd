@@ -21,14 +21,16 @@ const RELEASE_Y := 0.19          # hysteresis, so a foot cannot chatter in and o
 const MAX_LOCK_TIME := 0.45      # a lock outliving its stride drags the body
 
 var skel: Skeleton3D
+var player: Player
 var l_foot := -1
 var r_foot := -1
 var _locked := {}                # bone index -> world position it is pinned to
 var _lock_age := {}
 var enabled := true
 
-func setup(s: Skeleton3D) -> void:
+func setup(s: Skeleton3D, p: Player = null) -> void:
 	skel = s
+	player = p
 	l_foot = s.find_bone("l-foot")
 	r_foot = s.find_bone("r-foot")
 
@@ -61,10 +63,15 @@ func _update_foot(idx: int, dt: float) -> void:
 			return
 		_solve_to(idx, _locked[idx])
 	elif y < PLANT_Y:
-		# Contact begins here. Pin it where it landed.
-		_locked[idx] = world.origin
+		# Contact begins here. Pin it where it landed — X/Z from the read, but Y
+		# from the known floor rather than the read itself: GestureIK sinks the
+		# whole model for a crouch, so a foot mid-crouch reads BELOW the true
+		# floor even standing still, and pinning that verbatim would drag the
+		# foot underground a little further on every relock.
+		var target := Vector3(world.origin.x, player.floor_y if player != null else world.origin.y, world.origin.z)
+		_locked[idx] = target
 		_lock_age[idx] = 0.0
-		_solve_to(idx, world.origin)
+		_solve_to(idx, target)
 
 # Thigh and shin rotate so the foot reaches `target` in world space. The solver
 # itself is in TwoBoneIK — the arms are the same two-link problem, and the arms

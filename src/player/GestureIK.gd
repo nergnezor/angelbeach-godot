@@ -25,10 +25,17 @@ const HIT_SERVE := 5
 # changes. One limit, set well above the fastest real gesture: the original
 # measured its hardest whip at 6-8 m/s, so 14 never clips choreography.
 const SINK_SPEED := 14.0
-const CROUCH_DROP := 0.10         # metres the hips sink at full crouch. The rig's
-                                  # hips sit ~0.7 m up, so this is already a
-                                  # seventh of their height — 0.30 folded the
-                                  # body in half.
+const CROUCH_DROP := 0.16         # metres the hips sink at full crouch. The
+                                  # rig's hips sit ~0.7 m up. 0.10 was chosen
+                                  # back when the bug below meant blend rarely
+                                  # got past its first tick of ramping, so the
+                                  # sink was barely reachable regardless of
+                                  # this value — it was never actually tuned
+                                  # against a working sink. Bumped once fixed;
+                                  # this mechanism has no shearing failure mode
+                                  # to stay cautious of (see the comment at the
+                                  # top of _run), the limit is just how deep a
+                                  # bend still reads as an athletic stance.
 
 var skel: Skeleton3D
 var player: Player
@@ -105,19 +112,23 @@ func _run(dt: float) -> void:
 		# matrix non-invertible.
 		skel.set_bone_pose_scale(b_head, Vector3(0.001, 0.001, 0.001))
 
-	# The crouch goes on BEFORE the anchors are read, using last frame's value.
-	# Reading a global pose flushes dirty bones, so the shoulder positions below
-	# already include the sink — no explicit transform update, which is not safe
-	# to call from inside a modifier anyway. FootLock runs after this and
-	# re-plants the feet, so the legs bend instead of the body sinking into sand.
-	# The crouch is computed and smoothed but NOT applied, after two attempts that
-	# both looked worse than leaving it alone. Translating the hip bone shears the
-	# torso on this rig whether the offset is taken from the animated pose or from
-	# rest — the first also stacks on itself every frame, because these animations
-	# do not key the hip's translation, so the modifier's own write survives into
-	# the next one. Doing this properly means bending the spine chain rather than
-	# sliding its root, which is a bigger job than a knee dip is worth right now.
-	# The value is kept live so that work has something to drive.
+	# The crouch goes on BEFORE the anchors are read, using last frame's value,
+	# so the shoulder positions below already include the sink. FootLock runs
+	# after this and re-plants the feet at the true floor height, so the legs
+	# bend instead of the body sinking into sand.
+	#
+	# This sinks the MODEL NODE, not a bone. Two earlier attempts translated the
+	# hip bone's pose instead and both looked worse: the offset sheared the
+	# torso whether it was taken from the animated pose or from rest, and taking
+	# it from the animated pose also stacked on itself every frame, because
+	# these animations do not key the hip's translation, so the modifier's own
+	# write survived into the next one and the sink ran away. A plain Node3D
+	# translation on `view` has none of that — it is a rigid offset below the
+	# whole skeleton, not a write into one of its bones — and FootLock already
+	# has the machinery (two-bone IK, the same solver the arms use) to bend the
+	# legs back out to the feet's true position once the hips have moved.
+	if player.view != null:
+		player.view.position.y = -Player.PLAYER_HEIGHT - _crouch * CROUCH_DROP
 
 	var sh_r := _bone_world(b_r_arm)
 	var sh_l := _bone_world(b_l_arm)

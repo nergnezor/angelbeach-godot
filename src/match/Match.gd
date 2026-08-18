@@ -499,6 +499,17 @@ func _hold_plan(p: Player) -> void:
 		p.move_toward_ground(p.plan_goal, p.plan_speed)
 	else:
 		p.move_input = Vector3.ZERO
+	# _armed is rebuilt from nothing every _step(), but arm_stroke only runs on
+	# a decision tick — every OTHER frame in the reaction-cadence gap landed
+	# here instead, marked nobody, and the end-of-frame sweep read that as
+	# "not playing this ball" and released the stroke it had just set. Not a
+	# tuning wobble: hit_type was snapping to HIT_NONE on most frames of every
+	# windup, so gesture_blend (and the crouch riding on it) rarely got past
+	# its first tick of ramping before being cut back to zero and starting
+	# over. Holding a plan does not mean the player stopped playing the ball,
+	# so a live stroke re-arms here too.
+	if not headless and p.hit_type != GestureIK.HIT_NONE:
+		_armed[p] = true
 
 # The block, ported from PlayDefense. Returns false when there is nothing to
 # block, so the caller falls back to resetting.
@@ -611,6 +622,9 @@ func _approach_for_spike(p: Player) -> bool:
 		p.move_input = Vector3.ZERO
 		p.face_target = ball.position
 		p.has_face_target = true
+		if not headless:
+			var air_bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, SPIKE_STRIKE_Y)
+			_spike_windup(p, air_bt[2] if air_bt[0] else -1.0)
 		return true
 	var bt := MotionPlan.ball_time_to_height(ball.position, ball.vel, SPIKE_STRIKE_Y)
 	var strike: Vector3 = bt[1] if bt[0] else Vector3.ZERO
@@ -627,6 +641,8 @@ func _approach_for_spike(p: Player) -> bool:
 		# through it either. PlayHitter sends touch three straight here, and this
 		# is ApproachForSpike's own fallback.
 		return _ground_attack(p)
+	if not headless:
+		_spike_windup(p, tau)
 	var time_to_apex: float = Player.LOADED_JUMP_VELOCITY / 19.0
 	var plant := Vector3(strike.x + _sign(p.team) * PLANT_OFFSET,
 		Player.PLAYER_HEIGHT, strike.z)
@@ -661,6 +677,21 @@ func _approach_for_spike(p: Player) -> bool:
 		p.move_input = Vector3.ZERO
 		p.start_loaded_jump()
 	return true
+
+# Arms the windup _arm_stroke would set for any other touch, shared between
+# ApproachForSpike's run-up and its airborne hang time. Sticky once set: bt
+# can go stale for a frame right at the ball's apex, and re-testing tau every
+# call would drop hit_type there and snap the arm back to ready mid-swing.
+func _spike_windup(p: Player, tau: float) -> void:
+	if p.swing > 0.0:
+		return                                  # mid follow-through, leave it alone
+	if p.hit_type == GestureIK.HIT_SPIKE:
+		_armed[p] = true
+		return
+	if tau < 0.0 or tau > 1.2:
+		return
+	p.hit_type = GestureIK.HIT_SPIKE
+	_armed[p] = true
 
 # Which stroke is this player about to play, and where is it aimed? The stroke
 # follows the same touch count the protocol enforces, so the pose can never
