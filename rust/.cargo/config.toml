@@ -50,13 +50,22 @@
 #      handling ABI is now unconditionally used" on this target). Deployed
 #      and checked with wasm-objdump: the __cpp_exception Tag import was
 #      still present.
-#   4. The actual, durable fix: pin the nightly toolchain itself (see
-#      .github/workflows/pages.yml) to nightly-2025-11-15, ~3 weeks before
-#      the 2025-12-05 default flip. At that vintage the legacy JS-based ABI
-#      is simply the unconditional default, so no exception-related flag is
-#      needed here at all. If Godot ever ships official web export templates
-#      built with wasm-eh, this whole problem inverts and the toolchain pin
-#      should move forward past 2025-12-05 instead.
+#   4. Pinning to nightly-2025-11-15 (before the 2025-12-05 default flip, no
+#      flag needed) looked like the fix but wasn't verifiable even at the
+#      "does it compile" level: godot 0.5.5's own MSRV is rustc 1.94, and
+#      the nightly version number doesn't bump from 1.93 to 1.94 until
+#      2025-12-06 -- the SAME day as the flip. There is no date where
+#      "before the flip" and "meets the MSRV" both hold; pinning by date
+#      pre-flip is a dead end for this project specifically.
+#   5. The actual, durable fix: pin PAST the flip instead, to a nightly new
+#      enough for the MSRV, and pass the flag explicitly to restore the
+#      legacy default it used to be (see .github/workflows/pages.yml for the
+#      exact pinned date and why -- also notes a separate, unrelated cdylib
+#      regression on some nightlies in that range, found the same way:
+#      by actually trying dates rather than assuming any post-flip nightly
+#      would do). Verified with a real local emsdk 4.0.11 build inspected
+#      via wasm-objdump: shared memory import present, zero Tag[] entries,
+#      no __cpp_exception import anywhere -- not just green CI.
 [target.wasm32-unknown-emscripten]
 rustflags = [
     "-C", "link-args=-sSIDE_MODULE=2",
@@ -64,4 +73,5 @@ rustflags = [
     "-C", "target-feature=+atomics",
     "-Z", "default-visibility=hidden",
     "-Z", "link-native-libraries=no",
+    "-Z", "emscripten-wasm-eh=false",
 ]

@@ -80,21 +80,63 @@ jobs:
           # `gh api repos/rust-lang/rust/pulls/147224/files`) shows
           # `emscripten_wasm_eh` flipped its DEFAULT from false to true on
           # 2025-12-05 (PR#147224, "Emscripten: Turn wasm-eh on by default"),
-          # and by the nightly this project floated to on 2026-08-16 the whole
-          # `-Z emscripten-wasm-eh` flag had been deleted outright -- confirmed
-          # by CI itself failing with `error: unknown unstable option:
-          # 'emscripten-wasm-eh'`, not just a changed default. There is no
-          # longer any rustc flag that gets native Rust code back to the
-          # legacy JS-based exception lowering Godot 4.7.1's official web
-          # export templates were built with (WebAssembly exceptions need an
-          # `env.__cpp_exception` Tag import those templates don't provide --
-          # that mismatch is the LinkError this pin fixes). This date is
-          # ~3 weeks before the default flip, so the target's exception ABI is
-          # legacy JS by default and no -Z flag is needed for it at all. See
-          # rust/.cargo/config.toml for the flags this replaced.
-          toolchain: nightly-2025-11-15
+          # and by whatever nightly this project floats to today the whole
+          # `-Z emscripten-wasm-eh` flag is gone outright -- confirmed by CI
+          # itself failing with `error: unknown unstable option:
+          # 'emscripten-wasm-eh'`, not just a changed default (that flag is
+          # confirmed present, by fetching static.rust-lang.org's own dated
+          # manifests, from whenever it was introduced through at least
+          # 2026-05-01, gone by 2026-06-15).
+          #
+          # An EARLIER version of this pin used nightly-2025-11-15 (before the
+          # default flip, relying on the OLD default instead of the flag) and
+          # skipped the flag in rust/.cargo/config.toml entirely -- that broke
+          # two ways at once, both caught only by actually trying the build,
+          # not by reasoning about dates alone:
+          #   1. godot 0.5.5's own MSRV is rustc 1.94; nightly-2025-11-15 is
+          #      1.93.0. `cargo build` for the NATIVE step refused outright:
+          #      "rustc 1.93.0-nightly is not supported by ... godot@0.5.5".
+          #      Checked against static.rust-lang.org's dated channel
+          #      manifests: the nightly version number only bumps to 1.94 on
+          #      2025-12-06 -- the SAME DAY as the wasm-eh default flip, so
+          #      there is no date at all where "before the flip" and "meets
+          #      the MSRV" both hold. Pinning by date pre-flip is a dead end.
+          #   2. Cargo also refused `--crate-type cdylib` on some (not all)
+          #      dates even once rustc was new enough -- e.g. 2026-02-01
+          #      dropped it outright ("dropping unsupported crate type
+          #      cdylib for target wasm32-unknown-emscripten") where
+          #      2025-12-10, 2026-01-01, 2026-03-01 through 2026-06-01 did
+          #      not; some specific nightlies regress this target
+          #      independent of the exception-ABI question entirely.
+          #
+          # nightly-2025-12-10 is the actual fix: past the MSRV bump, has
+          # cdylib support, and the flag exists (rustc 1.94.0-nightly).
+          # Verified for real, not just green CI: a full local build (with a
+          # real emsdk 4.0.11, matching EM_VERSION) through this exact
+          # toolchain + `-Z emscripten-wasm-eh=false` (rust/.cargo/config.toml)
+          # produces a shared-memory import (`env.memory ... shared`, the
+          # threading requirement) and legacy JS-based exception plumbing
+          # (`env.invoke_*`, `env.__cxa_throw`, `env.__cxa_begin/end_catch`)
+          # -- inspected directly with wasm-objdump -x on the built
+          # angelbeach.wasm, with zero `Tag[]` entries and no
+          # `__cpp_exception` import anywhere in the import table. That's the
+          # exact shape Godot's official (JS-lowering) web templates need.
+          #
+          # Installed but NOT relied on as the rustup default (this action
+          # sets whatever it installs as default, and installing it here,
+          # first, means the `stable` step right below overrides that) --
+          # the wasm build step addresses it explicitly by name
+          # (`cargo +nightly-2025-12-10`) regardless of which is default.
+          toolchain: nightly-2025-12-10
           targets: wasm32-unknown-emscripten
           components: rust-src
+
+      - uses: dtolnay/rust-toolchain@stable
+        # Installed SECOND so it -- not the pinned nightly above -- is the
+        # rustup default, since "Build the native core for the editor" below
+        # has no `+toolchain` of its own and needs godot 0.5.5's MSRV
+        # (rustc 1.94).
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
@@ -131,7 +173,7 @@ jobs:
         # that step's comment for why the folder has to be at this fixed
         # path rather than emsdk's default location).
         run: |
-          EM_CACHE="$GITHUB_WORKSPACE/$EMSDK_CACHE_FOLDER/sysroot-cache" cargo +nightly build --release \
+          EM_CACHE="$GITHUB_WORKSPACE/$EMSDK_CACHE_FOLDER/sysroot-cache" cargo +nightly-2025-12-10 build --release \
             --target wasm32-unknown-emscripten -Zbuild-std
           mkdir -p ../bin
           cp target/wasm32-unknown-emscripten/release/angelbeach.wasm \
