@@ -70,6 +70,16 @@ const RUN_THRESHOLD := 0.35
 # bone with src/debug/Bones.tscn, not eyeballed. 0.6 takes the chest to
 # 0.50 x 0.34 x 0.34, which is still broad-shouldered against a 0.33 m hip.
 const TORSO_SCALE := 0.6
+# The shoulder and thigh pods are the same story, uniform scale is just the
+# wrong tool for them. A first pass scaled the whole limb bone down like the
+# chest and it came out with visibly shortened legs: each limb bone's child
+# sits almost exactly along the bone's own local Y (measured off the rig's
+# rest translations — e.g. r-leg sits at (0, 0.64, 0) in r-thigh's frame), so
+# a UNIFORM shrink pulls the pod mesh in along that axis too, dragging the
+# knee-end of the thigh pod back up toward the hip. Scaling only X/Z — the
+# cross-section — and leaving Y at 1.0 thins the pod without moving its far
+# end, so the leg keeps its length.
+const LIMB_WIDTH_SCALE := 0.55
 
 var human := false
 var view: Node3D
@@ -182,7 +192,44 @@ func _slim_torso() -> void:
 			continue
 		skel.set_bone_pose_position(b, skel.get_bone_rest(b).origin / s)
 		skel.set_bone_pose_scale(b, Vector3.ONE / s)
+	for b in ["r-arm", "l-arm", "r-forearm", "l-forearm", "r-thigh", "l-thigh", "r-leg", "l-leg"]:
+		_thin_limb_bone(b)
 	skel.force_update_all_bone_transforms()
+
+# Thin one limb segment's pod without shortening it. Unlike the chest above,
+# this scales only the local X/Z (the pod's cross-section) and leaves Y — the
+# limb's own length axis — at 1.0, so the far end of the pod stays exactly
+# where the child bone already puts it instead of pulling in toward the
+# parent origin. Safe here specifically because every limb child sits
+# essentially on its parent's local Y axis at rest (checked off the rig's own
+# translations); a bone whose child sat off-axis would shear under this and
+# would need the full uniform treatment above instead.
+#
+# COMPOSED onto the bone's existing pose scale, not overwritten: r-arm and
+# l-arm already carry the chest loop's reciprocal (Vector3.ONE / TORSO_SCALE)
+# so their own mesh is not shrunk along with the chest, and r-forearm/
+# l-forearm pick up a reciprocal of their own the first time this function
+# runs on r-arm/l-arm (to cancel THIS thinning before their own turn in the
+# same loop applies it for real). Overwriting the bone's scale outright — the
+# first version of this did — threw the chest cancellation away and let the
+# chest's shrink leak back onto the arms on top of the thinning, so the
+# resting arms read as too short while the swing pose, which pulls the arm
+# away from the body and reads mostly off its length rather than its
+# thickness, still looked roughly right. Multiplying the factor in preserves
+# whatever cancellation is already sitting on the bone.
+func _thin_limb_bone(bone_name: String) -> void:
+	var bone := skel.find_bone(bone_name)
+	if bone < 0:
+		return
+	var s := maxf(LIMB_WIDTH_SCALE, 0.001)
+	var f := Vector3(s, 1.0, s)
+	skel.set_bone_pose_scale(bone, skel.get_bone_pose_scale(bone) * f)
+	for b in skel.get_bone_count():
+		if skel.get_bone_parent(b) != bone:
+			continue
+		var rest_pos := skel.get_bone_rest(b).origin
+		skel.set_bone_pose_position(b, Vector3(rest_pos.x / f.x, rest_pos.y / f.y, rest_pos.z / f.z))
+		skel.set_bone_pose_scale(b, skel.get_bone_pose_scale(b) / f)
 
 # Four identical rigs on a beige court is unreadable — tint the one you have
 # taken over so you can find yourself without hunting. false gives the body
