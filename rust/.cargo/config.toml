@@ -23,52 +23,45 @@
 # exactly what a target-scoped rustflags (rather than a step-local env var)
 # guarantees.
 #
-# -Cllvm-args=-enable-emscripten-cxx-exceptions=0 alone (what an earlier
-# version of this file had) does NOT fix the `Import #83 "env"
-# "__cpp_exception": tag import requires a WebAssembly.Tag` LinkError --
-# verified directly by inspecting a deployed build's import table with
-# wasm-objdump: the tag[0] <env.__cpp_exception> import was present with
-# that flag AND, wrongly assumed to be the fix at the time, still present
-# after removing it entirely. Neither state matched what Godot's official
-# templates (built with plain emcc, JS-based exception lowering, no such
-# Tag export) expect. Removing it was based on the reasoning that this
-# crate is pure Rust with nothing for a C++-exceptions-specific flag to
-# control -- true, but beside the point: Rust's own panic=unwind codegen
-# for this target independently decides between the legacy Emscripten
-# JS-based lowering and the native wasm-exceptions Tag-based ABI, and that
-# decision is NOT what -enable-emscripten-cxx-exceptions controls.
-#
-# The actual fix, and the two flags actually missing, came from
-# godot-rust's own web export docs (godot-rust.github.io/book/toolchain/
-# export-web.html), which is the authoritative recipe for this exact
-# gdext-to-wasm combination -- more authoritative than the third-party
-# hello-gdext-wasm project this file previously cited, which predates
-# whatever gdext/rustc version introduced the need for these two:
-#   forcing the legacy JS-based exception lowering -- overriding whatever
-#     makes Rust default to native wasm exceptions here despite
-#     -enable-emscripten-cxx-exceptions=0 also being set.
-#   -Z default-visibility=hidden  -- isolates symbols; matters once/if this
-#     extension shares a page with other wasm modules, harmless otherwise.
-# Re-added -enable-emscripten-cxx-exceptions=0 alongside them since that's
-# what godot-rust's own docs pair it with, even though it alone did nothing
-# here -- no evidence it's actively harmful, and diverging from the
-# documented-working combination without a specific reason is how the
-# previous, wrong "just remove it" fix happened.
-#
-# The docs' own flag for the first one, `-Z emscripten-wasm-eh=false`, does
-# not exist on this toolchain (nightly 2026-08-16): `error: unknown unstable
-# option`, confirmed against `rustc -Z help`, which lists no such flag.
-# `rustc --target wasm32-unknown-emscripten --print target-features` does
-# list a real, matching lever: the `exception-handling` Wasm target feature,
-# which controls exactly this (LLVM's Wasm backend chooses the native
-# Tag-based ABI when it's on). Disabling it via target-feature achieves the
-# same "force legacy lowering" result the missing flag was meant to.
+# The `env.__cpp_exception` Tag LinkError (`Import #83 "env"
+# "__cpp_exception": tag import requires a WebAssembly.Tag`) took four
+# attempts to actually fix. Root cause: Godot 4.7.1's official web export
+# templates were built with Emscripten's legacy JS-based exception lowering
+# (no Tag export), while newer rustc defaults wasm32-unknown-emscripten to
+# the native Wasm-exceptions Tag-based ABI. Every attempt below was checked
+# against a deployed build's real import table with wasm-objdump, not just
+# green CI -- green CI alone was wrong twice here.
+#   1. -Cllvm-args=-enable-emscripten-cxx-exceptions=0 -- inert. It's an LLVM
+#      C++-exceptions toggle; this crate has no C++ for it to control. The
+#      Tag import was present with and without it.
+#   2. -Z emscripten-wasm-eh=false -- this was the correct lever (rustc's own
+#      `emscripten_wasm_eh` codegen option, confirmed by reading
+#      compiler/rustc_session/src/options.rs), but the project floated on
+#      @nightly with no date pin, and by the time CI next ran, the flag had
+#      been deleted from rustc outright: `error: unknown unstable option:
+#      'emscripten-wasm-eh'`. Per rust-lang/rust#147224, this option
+#      defaulted to false (legacy JS, matching Godot's templates) until
+#      2025-12-05, then defaulted true, then was removed as an option
+#      entirely by some nightly before 2026-08-16.
+#   3. -C target-feature=-exception-handling -- also verified NOT to work:
+#      disabling the LLVM Wasm target feature does not override rustc's own
+#      panic-lowering decision on a nightly where emscripten_wasm_eh is
+#      unconditional (per rustc's 1.98.0 release notes: "the WASM exception
+#      handling ABI is now unconditionally used" on this target). Deployed
+#      and checked with wasm-objdump: the __cpp_exception Tag import was
+#      still present.
+#   4. The actual, durable fix: pin the nightly toolchain itself (see
+#      .github/workflows/pages.yml) to nightly-2025-11-15, ~3 weeks before
+#      the 2025-12-05 default flip. At that vintage the legacy JS-based ABI
+#      is simply the unconditional default, so no exception-related flag is
+#      needed here at all. If Godot ever ships official web export templates
+#      built with wasm-eh, this whole problem inverts and the toolchain pin
+#      should move forward past 2025-12-05 instead.
 [target.wasm32-unknown-emscripten]
 rustflags = [
     "-C", "link-args=-sSIDE_MODULE=2",
     "-C", "link-args=-pthread",
-    "-C", "target-feature=+atomics,-exception-handling",
-    "-C", "llvm-args=-enable-emscripten-cxx-exceptions=0",
+    "-C", "target-feature=+atomics",
     "-Z", "default-visibility=hidden",
     "-Z", "link-native-libraries=no",
 ]

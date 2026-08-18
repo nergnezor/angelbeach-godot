@@ -71,10 +71,28 @@ jobs:
           version: ${{ env.EM_VERSION }}
           actions-cache-folder: ${{ env.EMSDK_CACHE_FOLDER }}
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
           # The Rust wasm32-unknown-emscripten target needs build-std, which is
           # nightly-only. This is the one place the project is not on stable.
+          #
+          # Pinned, not floating @nightly: rustc's own options.rs (checked via
+          # `gh api repos/rust-lang/rust/pulls/147224/files`) shows
+          # `emscripten_wasm_eh` flipped its DEFAULT from false to true on
+          # 2025-12-05 (PR#147224, "Emscripten: Turn wasm-eh on by default"),
+          # and by the nightly this project floated to on 2026-08-16 the whole
+          # `-Z emscripten-wasm-eh` flag had been deleted outright -- confirmed
+          # by CI itself failing with `error: unknown unstable option:
+          # 'emscripten-wasm-eh'`, not just a changed default. There is no
+          # longer any rustc flag that gets native Rust code back to the
+          # legacy JS-based exception lowering Godot 4.7.1's official web
+          # export templates were built with (WebAssembly exceptions need an
+          # `env.__cpp_exception` Tag import those templates don't provide --
+          # that mismatch is the LinkError this pin fixes). This date is
+          # ~3 weeks before the default flip, so the target's exception ABI is
+          # legacy JS by default and no -Z flag is needed for it at all. See
+          # rust/.cargo/config.toml for the flags this replaced.
+          toolchain: nightly-2025-11-15
           targets: wasm32-unknown-emscripten
           components: rust-src
       - uses: Swatinem/rust-cache@v2
