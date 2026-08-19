@@ -1,0 +1,153 @@
+# Android APK, signed with the debug keystore so it sideloads. A Play upload
+# would swap in a real release keystore via GODOT_ANDROID_KEYSTORE_RELEASE_*.
+#
+# Two native builds, for the same reason Pages has two: the editor binary that
+# drives --import/--export is linux x86_64 and loads the linux.debug.x86_64
+# GDExtension slot, while the APK loads android.release.arm64. Skipping the
+# linux one makes import fail before the Android .so matters.
+name: Android
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: 4.7.1
+  # From Godot 4.7's own exporting_for_android docs. The rust --android path
+  # only needs the NDK clang wrapper; Godot's APK packer also wants
+  # build-tools (apksigner, zipalign) and platform-tools.
+  NDK_VERSION: 28.1.13356709
+  BUILD_TOOLS_VERSION: 35.0.1
+
+jobs:
+  apk:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            build-tools;${{ env.BUILD_TOOLS_VERSION }}
+            platforms;android-35
+            ndk;${{ env.NDK_VERSION }}
+
+      - name: Install Xvfb
+        # Even --headless touches editor-only code paths (icon/theme loading)
+        # that need a display server on Linux, or the editor binary aborts
+        # (SIGABRT, no error message) partway through --import. Same as CI
+        # and Pages.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb unzip
+
+      - name: Build the native core for the editor
+        run: ./build.sh
+
+      - name: Build the native core for Android
+        # ANDROID_HOME is set by setup-android; do not bake it into ${{ env.* }}
+        # here — that expansion is empty at workflow parse time.
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/${NDK_VERSION}"
+          test -d "$ANDROID_NDK_HOME"
+          ./build.sh --android --release
+          test -f bin/libangelbeach.android.arm64.release.so
+
+      - name: Cache Godot editor and export templates
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot-bin
+            ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Fetch Godot and its export templates
+        run: |
+          BASE=Godot_v${GODOT_VERSION}-stable_linux.x86_64
+          if [ ! -x "godot-bin/$BASE" ]; then
+            mkdir -p godot-bin
+            curl -fsSL -o godot.zip \
+              "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${BASE}.zip"
+            unzip -q godot.zip -d godot-bin && chmod +x "godot-bin/$BASE"
+          fi
+          echo "GODOT=$PWD/godot-bin/$BASE" >> "$GITHUB_ENV"
+
+          DEST="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          if [ ! -d "$DEST" ]; then
+            curl -fsSL -o templates.tpz \
+              "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+            unzip -q templates.tpz
+            mkdir -p "$DEST"
+            mv templates/* "$DEST"
+          fi
+
+      - name: Debug keystore
+        # Godot reads these env vars over the empty keystore/* fields in
+        # export_presets.cfg. Debug and release both point here so a
+        # --export-release APK (release template + release .so) still signs
+        # with a key that sideloads; a Play keystore is a secret this repo
+        # does not carry.
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -alias androiddebugkey -keyalg RSA -keysize 2048 \
+              -validity 10000 -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_PATH=$HOME/.android/debug.keystore" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_USER=androiddebugkey" >> "$GITHUB_ENV"
+          echo "GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD=android" >> "$GITHUB_ENV"
+
+      - name: Import
+        # Same Godot editor post-import SIGSEGV as CI/Pages: artifacts land
+        # before the crash, so gate on the cache, not the process exit code.
+        # ANDROID_HOME / JAVA_HOME must already be in the environment here:
+        # Godot copies them into editor_settings-4.7.tres on first launch.
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME JAVA_HOME=$JAVA_HOME"
+          test -d "$ANDROID_HOME/platform-tools"
+          test -d "$JAVA_HOME"
+          xvfb-run --auto-servernum $GODOT --headless --import --path . || true
+          test -s .godot/global_script_class_cache.cfg
+          grep -q TouchControls .godot/global_script_class_cache.cfg
+          grep -q TouchControls .godot/global_script_class_cache.cfg
+
+      - name: Export Android
+        # Same crash class as Import can land after the APK is written, so
+        # success is the file, not the exporter's exit code. The .so check is
+        # the GDExtension analogue of Pages asserting a .wasm landed: an APK
+        # that exports while dropping the extension boots to unknown classes.
+        run: |
+          mkdir -p build/android
+          xvfb-run --auto-servernum $GODOT --headless --path . \
+            --export-release "Android" build/android/angelbeach.apk \
+            > export.log 2>&1 || true
+          cat export.log
+          test -s build/android/angelbeach.apk
+          unzip -l build/android/angelbeach.apk | grep -E 'lib/arm64-v8a/libangelbeach'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: angelbeach-android
+          path: build/android/angelbeach.apk

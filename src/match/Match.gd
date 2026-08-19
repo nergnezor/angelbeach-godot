@@ -96,6 +96,7 @@ var human_player: Player = null
 
 var camera: Camera3D
 var hud: Label
+var touch: TouchControls
 # Players that armed a stroke this step. Anyone missing from it is no longer
 # the designated contact, and a stroke nobody clears freezes the pose forever —
 # players stood holding a bump platform for whole rallies.
@@ -126,6 +127,7 @@ func _build_presentation() -> void:
 
 	var layer := CanvasLayer.new()
 	hud = Label.new()
+	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.position = Vector2(24, 18)
 	hud.add_theme_font_size_override("font_size", 22)
 	hud.add_theme_color_override("font_color", Color(1, 1, 1))
@@ -133,14 +135,22 @@ func _build_presentation() -> void:
 	hud.add_theme_constant_override("outline_size", 6)
 	layer.add_child(hud)
 	add_child(layer)
+	touch = TouchControls.new()
+	add_child(touch)
 	_update_hud()
 
 func _update_hud() -> void:
 	if hud == null:
 		return
 	var serve_mark := "*" if state.serving_team == MatchState.Team.A else " "
-	var ctrl := "space to take over the player nearest the ball" if human_player == null \
-		else "arrows / WASD to move, space to jump"
+	var on_touch := touch != null and touch.shown
+	var ctrl: String
+	if human_player == null:
+		ctrl = "JUMP to take over the player nearest the ball" if on_touch \
+			else "space to take over the player nearest the ball"
+	else:
+		ctrl = "stick to move, JUMP to jump" if on_touch \
+			else "arrows / WASD to move, space to jump"
 	hud.text = "YOU %d%s —  %d CPU   set %d   %s\ntouch %d/3\n\n%s" % [
 		state.score_a, serve_mark, state.score_b, state.current_set,
 		state.sets_string(), touches, ctrl]
@@ -186,12 +196,40 @@ func _release_human() -> void:
 	human_player.mark_as_human(false)
 	human_player = null
 
+# Camera-relative move vector from keyboard, WASD (not in the default ui_*
+# map) and the on-screen stick. The strongest of the three wins so a stray
+# analog rest-value cannot steal a tap, and a finger on the stick cannot be
+# cancelled by a key that is not even pressed.
+func _move_vector() -> Vector2:
+	var iv := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	var wasd := Vector2(
+		float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A)),
+		float(Input.is_physical_key_pressed(KEY_S)) - float(Input.is_physical_key_pressed(KEY_W)))
+	if wasd.length_squared() > iv.length_squared():
+		iv = wasd.limit_length(1.0)
+	if touch != null and touch.stick.length_squared() > iv.length_squared():
+		iv = touch.stick
+	return iv
+
+
+func _jump_just() -> bool:
+	if Input.is_action_just_pressed("ui_accept"):
+		return true
+	return touch != null and touch.consume_jump()
+
+
+func _jump_held() -> bool:
+	if Input.is_action_pressed("ui_accept"):
+		return true
+	return touch != null and touch.jump_held
+
+
 # The player you took over takes the stick; the other three keep the
 # budget-driven AI. Input is camera-relative and derived from the camera's own
 # basis rather than hard-coded axes, so moving the camera cannot silently
 # invert your controls.
 func _human_drive(p: Player) -> void:
-	var iv := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	var iv := _move_vector()
 	if camera == null:
 		p.move_input = Vector3.ZERO
 		return
@@ -203,7 +241,7 @@ func _human_drive(p: Player) -> void:
 	if dir.length() > 1.0:
 		dir = dir.normalized()
 	p.move_input = dir
-	if Input.is_action_pressed("ui_accept") and p.grounded:
+	if _jump_held() and p.grounded:
 		p.vel.y = Player.JUMP_VELOCITY
 	# You get the same stroke shaping the AI does. Without this the one player
 	# under human control is the only one on court with no arms.
@@ -243,7 +281,7 @@ func _step(dt: float) -> void:
 	# Windowed only, and deliberately outside the per-player loop: the takeover
 	# picks ONE body out of the four, so it cannot be a decision each player
 	# makes about itself.
-	if not headless and Input.is_action_just_pressed("ui_accept"):
+	if not headless and _jump_just():
 		_take_over()
 	_armed.clear()
 	for p in players:

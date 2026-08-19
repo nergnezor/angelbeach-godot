@@ -20,3 +20,10 @@ linux.release.x86_64 = "res://bin/libangelbeach.release.so"
 ; LinkError seen at load, on top of the crate itself lacking +atomics.
 web.debug.threads.wasm32 = "res://bin/libangelbeach.wasm32.debug.wasm"
 web.release.threads.wasm32 = "res://bin/libangelbeach.wasm32.release.wasm"
+; Android. arm64-v8a only — every Vulkan phone is 64-bit, and shipping a
+; 32-bit .so would double the NDK work for a device class Godot itself no
+; longer defaults on. Built with the NDK clang wrapper (see build.sh
+; --android); the filename still starts with lib, which Android's apk packer
+; requires (EditorExportPlatformAndroid::save_apk_so).
+android.debug.arm64 = "res://bin/libangelbeach.android.arm64.debug.so"
+android.release.arm64 = "res://bin/libangelbeach.android.arm64.release.so"

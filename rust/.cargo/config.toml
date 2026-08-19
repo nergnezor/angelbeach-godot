@@ -100,3 +100,14 @@ rustflags = [
     "-Z", "link-native-libraries=no",
     "-Z", "emscripten-wasm-eh=false",
 ]
+
+# Android. soname must be the unadorned lib name: Android's package manager
+# extracts lib/<abi>/*.so and the dynamic loader keys on DT_SONAME. A unique
+# staged filename (libangelbeach.android.arm64.release.so) is a Godot-side
+# concern only — see angelbeach.gdextension. The linker itself is NOT set
+# here: NDK paths are machine-local and belong in the environment, which
+# build.sh --android sets.
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,-soname,libangelbeach.so",
+]
