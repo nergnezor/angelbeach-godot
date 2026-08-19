@@ -156,7 +156,7 @@ func _view() -> Rect2:
 
 func _safe() -> Rect2:
 	var v := _view()
-	var s := DisplayServer.get_display_safe_area()
+	var s := Rect2(DisplayServer.get_display_safe_area())
 	if s.size.x < 8.0 or s.size.y < 8.0:
 		return v
 	# Safe area is in screen pixels; the viewport rect is in viewport pixels.
