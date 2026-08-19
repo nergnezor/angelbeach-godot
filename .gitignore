@@ -1,11 +1,12 @@
 # Godot 4
 .godot/
 *.translation
-# NOT export_presets.cfg: the Web preset is how CI builds the Pages deploy,
-# so it is source, not local state.
+# NOT export_presets.cfg: the Web and Android presets are how CI builds the
+# Pages deploy and the APK artifact, so they are source, not local state.
 
 # Build output
 builds/
+build/
 
 # Rust
 rust/target/

@@ -18,6 +18,13 @@
       "problemMatcher": ["$rustc"]
     },
     {
+      "label": "cargo build --android --release",
+      "type": "shell",
+      "command": "./build.sh --android --release",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": ["$rustc"]
+    },
+    {
       // No debugger at all. If this runs and "Play (windowed)" does not, the
       // problem is the debug setup, not the game.
       "label": "play (windowed, no debugger)",
